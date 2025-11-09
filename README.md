@@ -206,6 +206,14 @@ cargo install cross
 
 Artifacts will be in `target/release-artifacts/`.
 
+#### Code Signing
+
+**macOS:** Pre-built binaries are signed with Developer ID and notarized by Apple, so you won't see any Gatekeeper warnings.
+
+**Linux & Windows:** Binaries are provided as-is. These are standard CLI tools that work on all systems.
+
+For details on setting up code signing for other platforms or local builds, see `PLATFORM_SIGNING.md`.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
