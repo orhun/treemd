@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/treemd.svg)](https://crates.io/crates/treemd)
 [![Documentation](https://docs.rs/treemd/badge.svg)](https://docs.rs/treemd)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/epistates/treemd/ci.yml?branch=main)](https://github.com/epistates/treemd/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/epistates/treemd/rust.yml?branch=main)](https://github.com/epistates/treemd/actions)
 
 A markdown navigator with tree-based structural navigation. Like `tree`, but interactive—navigate markdown documents using an expandable/collapsible heading tree with a synchronized content view.
 
