@@ -100,7 +100,7 @@ treemd README.md
 
 ### CLI Mode (Non-Interactive)
 
-### List all headings
+#### List all headings
 
 ```bash
 treemd -l README.md
@@ -116,7 +116,7 @@ Output:
 ...
 ```
 
-### Show heading tree
+#### Show heading tree
 
 ```bash
 treemd --tree README.md
@@ -132,7 +132,7 @@ Output:
     ...
 ```
 
-### Extract a section
+#### Extract a section
 
 ```bash
 treemd -s "Installation" README.md
@@ -146,19 +146,19 @@ cargo install --path .
 ...
 ```
 
-### Filter headings
+#### Filter headings
 
 ```bash
 treemd -l --filter "usage" README.md
 ```
 
-### Show only specific heading level
+#### Show only specific heading level
 
 ```bash
 treemd -l -L 2 README.md  # Only ## headings
 ```
 
-### Count headings
+#### Count headings
 
 ```bash
 treemd --count README.md
@@ -174,11 +174,37 @@ Heading counts:
 Total: 12
 ```
 
-### JSON output
+#### JSON output
 
 ```bash
 treemd -l -o json README.md
 ```
+
+## Releases
+
+### Cross-Platform Binaries
+
+Pre-built binaries for multiple platforms are available on the [releases page](https://github.com/epistates/treemd/releases). Supported platforms:
+
+- **Linux x86_64** - `treemd-x86_64-unknown-linux-gnu`
+- **Linux ARM64** - `treemd-aarch64-unknown-linux-gnu`
+- **macOS x86_64** - `treemd-x86_64-apple-darwin`
+- **macOS ARM64** (Apple Silicon) - `treemd-aarch64-apple-darwin`
+- **Windows x86_64** - `treemd-x86_64-pc-windows-msvc.exe`
+
+### Building from Source
+
+To build binaries locally for all platforms (requires `cross` for Linux ARM targets):
+
+```bash
+# Install cross for Linux ARM support
+cargo install cross
+
+# Build all platforms
+./scripts/build-all.sh
+```
+
+Artifacts will be in `target/release-artifacts/`.
 
 ## Contributing
 
