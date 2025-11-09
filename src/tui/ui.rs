@@ -1,12 +1,13 @@
 use crate::tui::app::{App, Focus};
 use crate::tui::theme::Theme;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Wrap,
 };
-use ratatui::Frame;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     // Update content metrics before rendering to ensure content height and scroll are correct
@@ -100,16 +101,20 @@ fn render_outline(frame: &mut Frame, app: &mut App, area: Rect) {
             };
 
             // Show bookmark indicator if this item's text matches the bookmark
-            let bookmark_indicator = if app.bookmark_position.as_ref().map(|s| s.as_str()) == Some(&item.text) {
-                "⚑ "
-            } else {
-                ""
-            };
+            let bookmark_indicator =
+                if app.bookmark_position.as_deref() == Some(&item.text) {
+                    "⚑ "
+                } else {
+                    ""
+                };
 
             // Color headings by level using theme
             let color = theme.heading_color(item.level);
 
-            let text = format!("{}{}{}{} {}", indent, expand_indicator, bookmark_indicator, prefix, item.text);
+            let text = format!(
+                "{}{}{}{} {}",
+                indent, expand_indicator, bookmark_indicator, prefix, item.text
+            );
             let line = Line::from(Span::styled(text, Style::default().fg(color)));
 
             ListItem::new(line)
@@ -233,8 +238,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let theme_name = format!(" Theme:{} ", app.theme.name);
     let status_text = format!("{}{}", status_text, theme_name);
 
-    let status = Paragraph::new(status_text)
-        .style(app.theme.status_bar_style());
+    let status = Paragraph::new(status_text).style(app.theme.status_bar_style());
 
     frame.render_widget(status, area);
 }
@@ -259,9 +263,10 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::ITALIC),
         )]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Navigation", Style::default().add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Navigation",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  j/↓      ", Style::default().fg(Color::Yellow)),
             Span::raw("Move down"),
@@ -287,9 +292,10 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw("Page up (content)"),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Tree Operations", Style::default().add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Tree Operations",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  Enter/Space ", Style::default().fg(Color::Yellow)),
             Span::raw("Toggle expand/collapse"),
@@ -303,9 +309,10 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw("Collapse (or parent if no children)"),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("General", Style::default().add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "General",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  Tab      ", Style::default().fg(Color::Yellow)),
             Span::raw("Switch between Outline and Content"),
@@ -323,9 +330,10 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw("Quit"),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("UX Features", Style::default().add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "UX Features",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  w        ", Style::default().fg(Color::Cyan)),
             Span::raw("Toggle outline visibility (full-width content)"),
@@ -347,9 +355,10 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw("Jump to bookmarked position"),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Themes & Clipboard", Style::default().add_modifier(Modifier::BOLD)),
-        ]),
+        Line::from(vec![Span::styled(
+            "Themes & Clipboard",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::styled("  t        ", Style::default().fg(Color::Magenta)),
             Span::raw("Cycle color theme"),
@@ -392,8 +401,7 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
         .end_symbol(Some("↓"))
         .style(Style::default().fg(Color::Cyan));
 
-    let mut scrollbar_state = ScrollbarState::new(help_text_len)
-        .position(app.help_scroll as usize);
+    let mut scrollbar_state = ScrollbarState::new(help_text_len).position(app.help_scroll as usize);
 
     frame.render_stateful_widget(
         scrollbar,
@@ -438,8 +446,8 @@ fn extract_section_content(full_content: &str, heading_text: &str, level: usize)
 
                 // Verify it's a valid heading (has space after #)
                 if heading_level > 0 && heading_level <= level {
-                    let after_hashes = trimmed.chars().skip(heading_level).next();
-                    if after_hashes.map_or(false, |c| c.is_whitespace()) {
+                    let after_hashes = trimmed.chars().nth(heading_level);
+                    if after_hashes.is_some_and(|c| c.is_whitespace()) {
                         break;
                     }
                 }
@@ -455,7 +463,11 @@ fn extract_section_content(full_content: &str, heading_text: &str, level: usize)
 
 use crate::tui::syntax::SyntaxHighlighter;
 
-fn render_markdown_enhanced(content: &str, highlighter: &SyntaxHighlighter, theme: &Theme) -> Text<'static> {
+fn render_markdown_enhanced(
+    content: &str,
+    highlighter: &SyntaxHighlighter,
+    theme: &Theme,
+) -> Text<'static> {
     let mut lines = Vec::new();
     let mut in_code_block = false;
     let mut code_lang = String::new();
@@ -517,8 +529,7 @@ fn render_markdown_enhanced(content: &str, highlighter: &SyntaxHighlighter, them
             lines.push(Line::from(spans));
         }
         // Numbered lists
-        else if trimmed.chars().next().map_or(false, |c| c.is_numeric())
-            && trimmed.contains(". ")
+        else if trimmed.chars().next().is_some_and(|c| c.is_numeric()) && trimmed.contains(". ")
         {
             let formatted = format_inline_markdown(line, theme);
             lines.push(Line::from(formatted));
@@ -527,7 +538,10 @@ fn render_markdown_enhanced(content: &str, highlighter: &SyntaxHighlighter, them
         else if trimmed.starts_with('>') {
             let text = trimmed[1..].trim();
             let formatted = format_inline_markdown(text, theme);
-            let mut spans = vec![Span::styled("│ ", Style::default().fg(theme.blockquote_border))];
+            let mut spans = vec![Span::styled(
+                "│ ",
+                Style::default().fg(theme.blockquote_border),
+            )];
             spans.extend(formatted.into_iter().map(|span| {
                 Span::styled(
                     span.content,
@@ -651,14 +665,38 @@ fn render_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
 
     // All available themes
     let themes = [
-        (ThemeName::OceanDark, "Ocean Dark", "Base16 Ocean with cool blues"),
+        (
+            ThemeName::OceanDark,
+            "Ocean Dark",
+            "Base16 Ocean with cool blues",
+        ),
         (ThemeName::Nord, "Nord", "Arctic, north-bluish palette"),
-        (ThemeName::Dracula, "Dracula", "Dark theme with vibrant colors"),
-        (ThemeName::Solarized, "Solarized", "Precision colors for machines and people"),
-        (ThemeName::Monokai, "Monokai", "Sublime Text's iconic scheme"),
+        (
+            ThemeName::Dracula,
+            "Dracula",
+            "Dark theme with vibrant colors",
+        ),
+        (
+            ThemeName::Solarized,
+            "Solarized",
+            "Precision colors for machines and people",
+        ),
+        (
+            ThemeName::Monokai,
+            "Monokai",
+            "Sublime Text's iconic scheme",
+        ),
         (ThemeName::Gruvbox, "Gruvbox", "Retro groove color scheme"),
-        (ThemeName::TokyoNight, "Tokyo Night", "Modern night theme for low-light"),
-        (ThemeName::CatppuccinMocha, "Catppuccin Mocha", "Soothing pastel theme for night coding"),
+        (
+            ThemeName::TokyoNight,
+            "Tokyo Night",
+            "Modern night theme for low-light",
+        ),
+        (
+            ThemeName::CatppuccinMocha,
+            "Catppuccin Mocha",
+            "Soothing pastel theme for night coding",
+        ),
     ];
 
     // Create centered popup area
@@ -671,7 +709,9 @@ fn render_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(vec![Span::styled(
             "Select Theme (j/k to navigate, Enter to apply, Esc to cancel)",
-            Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::ITALIC),
         )]),
         Line::from(""),
     ];
@@ -681,7 +721,12 @@ fn render_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
         let is_current = *theme_name == app.current_theme;
 
         let (prefix, style) = if is_selected {
-            ("▶ ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            (
+                "▶ ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             ("  ", Style::default().fg(Color::White))
         };
@@ -695,7 +740,9 @@ fn render_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
         if is_selected {
             lines.push(Line::from(vec![Span::styled(
                 format!("  {}", description),
-                Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::ITALIC),
             )]));
         }
     }

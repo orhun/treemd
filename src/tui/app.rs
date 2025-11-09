@@ -26,9 +26,9 @@ pub struct App {
     pub search_query: String,
     pub highlighter: SyntaxHighlighter,
     pub show_outline: bool,
-    pub outline_width: u16, // Percentage: 20, 30, or 40
+    pub outline_width: u16,                // Percentage: 20, 30, or 40
     pub bookmark_position: Option<String>, // Bookmarked heading text (was: outline position)
-    collapsed_headings: HashSet<String>, // Track which headings are collapsed by text
+    collapsed_headings: HashSet<String>,   // Track which headings are collapsed by text
     pub current_theme: ThemeName,
     pub theme: Theme,
     pub show_theme_picker: bool,
@@ -41,7 +41,7 @@ pub struct OutlineItem {
     pub level: usize,
     pub text: String,
     pub expanded: bool,
-    pub has_children: bool,  // Track if this heading has children in the tree
+    pub has_children: bool, // Track if this heading has children in the tree
 }
 
 impl App {
@@ -87,7 +87,10 @@ impl App {
         }
     }
 
-    fn flatten_tree(tree: &[HeadingNode], collapsed_headings: &HashSet<String>) -> Vec<OutlineItem> {
+    fn flatten_tree(
+        tree: &[HeadingNode],
+        collapsed_headings: &HashSet<String>,
+    ) -> Vec<OutlineItem> {
         let mut items = Vec::new();
 
         fn flatten_recursive(
@@ -148,7 +151,9 @@ impl App {
         let content_text = if let Some(heading_text) = &current_selection {
             if let Some(_heading) = self.document.find_heading(heading_text) {
                 // Use extract_section_content to get the actual displayed content
-                self.document.extract_section(heading_text).unwrap_or_else(|| self.document.content.clone())
+                self.document
+                    .extract_section(heading_text)
+                    .unwrap_or_else(|| self.document.content.clone())
             } else {
                 self.document.content.clone()
             }
@@ -158,7 +163,8 @@ impl App {
 
         let content_lines = content_text.lines().count();
         self.content_height = content_lines as u16;
-        self.content_scroll_state = ScrollbarState::new(content_lines).position(self.content_scroll as usize);
+        self.content_scroll_state =
+            ScrollbarState::new(content_lines).position(self.content_scroll as usize);
     }
 
     pub fn next(&mut self) {
@@ -196,7 +202,9 @@ impl App {
         } else {
             // Scroll content
             self.content_scroll = self.content_scroll.saturating_sub(1);
-            self.content_scroll_state = self.content_scroll_state.position(self.content_scroll as usize);
+            self.content_scroll_state = self
+                .content_scroll_state
+                .position(self.content_scroll as usize);
         }
     }
 
@@ -280,7 +288,8 @@ impl App {
 
             if !restored {
                 self.outline_state.select(Some(0));
-                self.outline_scroll_state = ScrollbarState::new(self.outline_items.len()).position(0);
+                self.outline_scroll_state =
+                    ScrollbarState::new(self.outline_items.len()).position(0);
             }
         }
     }
@@ -289,14 +298,18 @@ impl App {
         if self.focus == Focus::Content {
             let new_scroll = self.content_scroll.saturating_add(10);
             self.content_scroll = new_scroll.min(self.content_height.saturating_sub(1));
-            self.content_scroll_state = self.content_scroll_state.position(self.content_scroll as usize);
+            self.content_scroll_state = self
+                .content_scroll_state
+                .position(self.content_scroll as usize);
         }
     }
 
     pub fn scroll_page_up(&mut self) {
         if self.focus == Focus::Content {
             self.content_scroll = self.content_scroll.saturating_sub(10);
-            self.content_scroll_state = self.content_scroll_state.position(self.content_scroll as usize);
+            self.content_scroll_state = self
+                .content_scroll_state
+                .position(self.content_scroll as usize);
         }
     }
 
@@ -321,7 +334,8 @@ impl App {
                         // If heading not found (shouldn't happen), clamp to valid index
                         let safe_idx = i.min(self.outline_items.len().saturating_sub(1));
                         self.outline_state.select(Some(safe_idx));
-                        self.outline_scroll_state = ScrollbarState::new(self.outline_items.len()).position(safe_idx);
+                        self.outline_scroll_state =
+                            ScrollbarState::new(self.outline_items.len()).position(safe_idx);
                     }
                 }
             }
@@ -345,7 +359,8 @@ impl App {
                         // If heading not found (shouldn't happen), clamp to valid index
                         let safe_idx = i.min(self.outline_items.len().saturating_sub(1));
                         self.outline_state.select(Some(safe_idx));
-                        self.outline_scroll_state = ScrollbarState::new(self.outline_items.len()).position(safe_idx);
+                        self.outline_scroll_state =
+                            ScrollbarState::new(self.outline_items.len()).position(safe_idx);
                     }
                 }
             }
@@ -364,13 +379,15 @@ impl App {
                         self.collapsed_headings.insert(current_text.clone());
 
                         // Rebuild the flattened list
-                        self.outline_items = Self::flatten_tree(&self.tree, &self.collapsed_headings);
+                        self.outline_items =
+                            Self::flatten_tree(&self.tree, &self.collapsed_headings);
 
                         // Restore selection by text
                         if !self.select_by_text(&current_text) {
                             let safe_idx = i.min(self.outline_items.len().saturating_sub(1));
                             self.outline_state.select(Some(safe_idx));
-                            self.outline_scroll_state = ScrollbarState::new(self.outline_items.len()).position(safe_idx);
+                            self.outline_scroll_state =
+                                ScrollbarState::new(self.outline_items.len()).position(safe_idx);
                         }
                     } else {
                         // If no children, find parent and collapse it
@@ -389,14 +406,16 @@ impl App {
                             self.collapsed_headings.insert(parent.clone());
 
                             // Rebuild and move selection to parent
-                            self.outline_items = Self::flatten_tree(&self.tree, &self.collapsed_headings);
+                            self.outline_items =
+                                Self::flatten_tree(&self.tree, &self.collapsed_headings);
 
                             // Select the parent by text
                             if !self.select_by_text(&parent) {
                                 // Fallback: select first item if parent not found
                                 if !self.outline_items.is_empty() {
                                     self.outline_state.select(Some(0));
-                                    self.outline_scroll_state = ScrollbarState::new(self.outline_items.len()).position(0);
+                                    self.outline_scroll_state =
+                                        ScrollbarState::new(self.outline_items.len()).position(0);
                                 }
                             }
                         }

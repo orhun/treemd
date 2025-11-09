@@ -40,13 +40,22 @@ impl SyntaxHighlighter {
                     let color = Color::Rgb(fg.r, fg.g, fg.b);
                     let mut ratatui_style = Style::default().fg(color);
 
-                    if style.font_style.contains(syntect::highlighting::FontStyle::BOLD) {
+                    if style
+                        .font_style
+                        .contains(syntect::highlighting::FontStyle::BOLD)
+                    {
                         ratatui_style = ratatui_style.add_modifier(Modifier::BOLD);
                     }
-                    if style.font_style.contains(syntect::highlighting::FontStyle::ITALIC) {
+                    if style
+                        .font_style
+                        .contains(syntect::highlighting::FontStyle::ITALIC)
+                    {
                         ratatui_style = ratatui_style.add_modifier(Modifier::ITALIC);
                     }
-                    if style.font_style.contains(syntect::highlighting::FontStyle::UNDERLINE) {
+                    if style
+                        .font_style
+                        .contains(syntect::highlighting::FontStyle::UNDERLINE)
+                    {
                         ratatui_style = ratatui_style.add_modifier(Modifier::UNDERLINED);
                     }
 
