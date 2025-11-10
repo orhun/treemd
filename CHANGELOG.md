@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2025-01-10
+
+### Fixed
+
+- **Tab completion for current directory files** - Fixed bug where `treemd R<tab>` wouldn't complete to `README.md` in the current directory. Path::parent() returns empty string for simple filenames, which is now normalized to "." for proper completion matching.
+
+### Added
+
+- **Filename in title bar** - Title bar now displays the filename being viewed: "treemd - README.md - 15 headings"
+- **Current heading in content pane** - Content pane header now shows the selected heading name instead of the generic "Content" label, providing better context while reading
+
+### Changed
+
+- **App struct enhancement** - Added `filename` field to track the source file for display purposes
+- **Content pane title logic** - Title dynamically updates based on selected heading, falling back to "Content" when none selected
+
+### Technical
+
+- Normalized empty parent paths in file completer to fix `Path::new("R").parent()` returning `Some("")` instead of `Some(".")`
+- Extracted filename from PathBuf when launching TUI mode using `file_name()` and `to_str()`
+
 ## [0.1.6] - 2025-01-09
 
 ### Fixed
