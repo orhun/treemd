@@ -70,8 +70,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_title_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let heading_count = app.outline_items.len();
-    let title_text = format!("treemd - {} headings", heading_count);
+    let heading_count = app.document.headings.len();
+    let title_text = format!("treemd - {} - {} headings", app.filename, heading_count);
 
     let title = Paragraph::new(title_text)
         .style(
@@ -156,13 +156,15 @@ fn render_content(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let block_style = theme.border_style(app.focus == Focus::Content);
 
-    // Get content for selected section
-    let content_text = if let Some(heading_text) = app.selected_heading_text() {
-        app.document
+    // Get content for selected section and determine title
+    let (content_text, title) = if let Some(heading_text) = app.selected_heading_text() {
+        let content = app.document
             .extract_section(heading_text)
-            .unwrap_or_else(|| app.document.content.clone())
+            .unwrap_or_else(|| app.document.content.clone());
+        let title = format!(" {} ", heading_text);
+        (content, title)
     } else {
-        app.document.content.clone()
+        (app.document.content.clone(), " Content ".to_string())
     };
 
     // Enhanced markdown rendering with syntax highlighting
@@ -173,7 +175,7 @@ fn render_content(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(block_style)
-                .title(" Content "),
+                .title(title),
         )
         .style(theme.content_style())
         .wrap(Wrap { trim: false })

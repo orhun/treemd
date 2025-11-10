@@ -12,6 +12,7 @@ pub enum Focus {
 
 pub struct App {
     pub document: Document,
+    pub filename: String,
     pub tree: Vec<HeadingNode>,
     pub outline_state: ListState,
     pub outline_scroll_state: ScrollbarState,
@@ -45,7 +46,7 @@ pub struct OutlineItem {
 }
 
 impl App {
-    pub fn new(document: Document) -> Self {
+    pub fn new(document: Document, filename: String) -> Self {
         let tree = document.build_tree();
         let collapsed_headings = HashSet::new();
         let outline_items = Self::flatten_tree(&tree, &collapsed_headings);
@@ -62,6 +63,7 @@ impl App {
 
         Self {
             document,
+            filename,
             tree,
             outline_state,
             outline_scroll_state: ScrollbarState::new(outline_items.len()),

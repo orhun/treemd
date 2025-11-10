@@ -90,7 +90,12 @@ fn main() -> Result<()> {
         && !args.setup_completions
     {
         let mut terminal = ratatui::init();
-        let app = treemd::App::new(doc);
+        let filename = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let app = treemd::App::new(doc, filename);
         let result = treemd::tui::run(&mut terminal, app);
         ratatui::restore();
         return result;
