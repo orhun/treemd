@@ -3,15 +3,17 @@
 //! This module provides functions to parse markdown files and extract
 //! their heading structure into a hierarchical tree.
 
-mod document;
-pub mod output;
-pub mod content;
 pub mod builder;
+pub mod content;
+mod document;
+pub mod links;
+pub mod output;
 pub mod utils;
 
-pub use document::{Document, Heading, HeadingNode};
-pub use output::{DocumentOutput, Section, Block, InlineElement};
 pub use builder::build_json_output;
+pub use document::{Document, Heading, HeadingNode};
+pub use links::{Link, LinkTarget, extract_links};
+pub use output::{Block, DocumentOutput, InlineElement, Section};
 
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use std::path::Path;

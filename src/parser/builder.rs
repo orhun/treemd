@@ -53,10 +53,7 @@ fn build_section(node: &HeadingNode, full_content: &str) -> Section {
         level: heading.level,
         title: heading.text.clone(),
         slug: slugify(&heading.text),
-        position: Position {
-            line,
-            offset,
-        },
+        position: Position { line, offset },
         content: Content {
             raw: raw_content,
             blocks,
@@ -101,12 +98,11 @@ fn find_next_heading(content: &str) -> usize {
         }
 
         // Check for heading only if not in code block
-        if !in_code_block
-            && get_heading_level(line).is_some() {
-                // For nested JSON output, stop at ANY heading (child sections are
-                // extracted separately and included in the children array)
-                return pos;
-            }
+        if !in_code_block && get_heading_level(line).is_some() {
+            // For nested JSON output, stop at ANY heading (child sections are
+            // extracted separately and included in the children array)
+            return pos;
+        }
 
         pos += line.len() + 1; // +1 for newline
     }

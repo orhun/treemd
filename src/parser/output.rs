@@ -112,10 +112,18 @@ pub struct ListItem {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum InlineElement {
-    Text { value: String },
-    Strong { value: String },
-    Emphasis { value: String },
-    Code { value: String },
+    Text {
+        value: String,
+    },
+    Strong {
+        value: String,
+    },
+    Emphasis {
+        value: String,
+    },
+    Code {
+        value: String,
+    },
     Link {
         text: String,
         url: String,
@@ -126,7 +134,9 @@ pub enum InlineElement {
         src: String,
         title: Option<String>,
     },
-    Strikethrough { value: String },
+    Strikethrough {
+        value: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

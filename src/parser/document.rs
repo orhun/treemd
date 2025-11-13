@@ -116,7 +116,10 @@ impl Document {
 
         // Find content start (skip the heading line itself)
         let after_heading = &self.content[start..];
-        let content_start = after_heading.find('\n').map(|i| start + i + 1).unwrap_or(start);
+        let content_start = after_heading
+            .find('\n')
+            .map(|i| start + i + 1)
+            .unwrap_or(start);
 
         // Find end: next heading at same or higher level
         let end = self

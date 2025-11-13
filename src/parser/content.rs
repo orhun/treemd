@@ -2,8 +2,8 @@
 //!
 //! Parses markdown content into semantic blocks and inline elements.
 
-use pulldown_cmark::{Alignment as CmarkAlignment, CodeBlockKind, Event, Parser, Tag, TagEnd};
 use super::output::{Alignment, Block, InlineElement, ListItem};
+use pulldown_cmark::{Alignment as CmarkAlignment, CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 /// Parse markdown content into structured blocks
 pub fn parse_content(markdown: &str, start_line: usize) -> Vec<Block> {
@@ -289,10 +289,7 @@ fn process_event(event: Event, state: &mut ParserState, blocks: &mut Vec<Block>)
             state.add_inline_text(&text);
             state.in_code_inline = false;
         }
-        Event::Start(Tag::Link {
-            dest_url,
-            ..
-        }) => {
+        Event::Start(Tag::Link { dest_url, .. }) => {
             state.in_link = true;
             state.link_url = dest_url.to_string();
             state.link_text.clear();
@@ -304,7 +301,9 @@ fn process_event(event: Event, state: &mut ParserState, blocks: &mut Vec<Block>)
                 url: state.link_url.clone(),
                 title: None,
             });
-            state.paragraph_buffer.push_str(&format!("[{}]({})", state.link_text, state.link_url));
+            state
+                .paragraph_buffer
+                .push_str(&format!("[{}]({})", state.link_text, state.link_url));
             state.link_text.clear();
             state.link_url.clear();
         }
