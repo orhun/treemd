@@ -67,6 +67,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.show_theme_picker {
         render_theme_picker(frame, app, area);
     }
+
+    // Render link picker if in link follow mode with links
+    if matches!(app.mode, crate::tui::app::AppMode::LinkFollow) && !app.links_in_view.is_empty() {
+        render_link_picker(frame, app, area);
+    }
 }
 
 fn render_title_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -101,12 +106,11 @@ fn render_outline(frame: &mut Frame, app: &mut App, area: Rect) {
             };
 
             // Show bookmark indicator if this item's text matches the bookmark
-            let bookmark_indicator =
-                if app.bookmark_position.as_deref() == Some(&item.text) {
-                    "⚑ "
-                } else {
-                    ""
-                };
+            let bookmark_indicator = if app.bookmark_position.as_deref() == Some(&item.text) {
+                "⚑ "
+            } else {
+                ""
+            };
 
             // Color headings by level using theme
             let color = theme.heading_color(item.level);
@@ -153,18 +157,33 @@ fn render_outline(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_content(frame: &mut Frame, app: &App, area: Rect) {
+    use crate::tui::app::AppMode;
+
     let theme = &app.theme;
     let block_style = theme.border_style(app.focus == Focus::Content);
 
     // Get content for selected section and determine title
     let (content_text, title) = if let Some(heading_text) = app.selected_heading_text() {
-        let content = app.document
+        let content = app
+            .document
             .extract_section(heading_text)
             .unwrap_or_else(|| app.document.content.clone());
-        let title = format!(" {} ", heading_text);
+
+        // Add link count to title if in link follow mode
+        let title = if app.mode == AppMode::LinkFollow && !app.links_in_view.is_empty() {
+            format!(" {} [Links: {}] ", heading_text, app.links_in_view.len())
+        } else {
+            format!(" {} ", heading_text)
+        };
+
         (content, title)
     } else {
-        (app.document.content.clone(), " Content ".to_string())
+        let title = if app.mode == AppMode::LinkFollow && !app.links_in_view.is_empty() {
+            format!(" Content [Links: {}] ", app.links_in_view.len())
+        } else {
+            " Content ".to_string()
+        };
+        (app.document.content.clone(), title)
     };
 
     // Enhanced markdown rendering with syntax highlighting
@@ -200,45 +219,125 @@ fn render_content(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let focus_indicator = match app.focus {
-        Focus::Outline => "Outline",
-        Focus::Content => "Content",
-    };
+    use crate::tui::app::AppMode;
 
-    let selected_idx = app.outline_state.selected().unwrap_or(0);
-    let total = app.outline_items.len();
-    let percentage = if total > 0 {
-        (selected_idx + 1) * 100 / total
+    // If there's a status message, display it prominently
+    if let Some(ref msg) = app.status_message {
+        let status = Paragraph::new(msg.clone()).style(
+            Style::default()
+                .bg(Color::Rgb(0, 80, 120))
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        );
+        frame.render_widget(status, area);
+        return;
+    }
+
+    let status_text = if app.mode == AppMode::LinkFollow {
+        // Link follow mode status
+        let link_count = app.links_in_view.len();
+        let selected = app.selected_link_idx.map(|i| i + 1).unwrap_or(0);
+
+        let link_info = if link_count > 0 {
+            // Show current link details
+            let current_link = app.selected_link_idx
+                .and_then(|idx| app.links_in_view.get(idx));
+
+            if let Some(link) = current_link {
+                use crate::parser::LinkTarget;
+                let target_str = match &link.target {
+                    LinkTarget::Anchor(a) => format!("#{}", a),
+                    LinkTarget::RelativeFile { path, anchor } => {
+                        if let Some(a) = anchor {
+                            format!("{}#{}", path.display(), a)
+                        } else {
+                            path.display().to_string()
+                        }
+                    }
+                    LinkTarget::WikiLink { target, .. } => format!("[[{}]]", target),
+                    LinkTarget::External(url) => {
+                        // Truncate long URLs
+                        if url.len() > 40 {
+                            format!("{}...", &url[..37])
+                        } else {
+                            url.clone()
+                        }
+                    }
+                };
+
+                format!(
+                    "Link {}/{}: \"{}\" → {} • Tab:Next • Enter:Follow • Esc:Exit",
+                    selected, link_count, link.text, target_str
+                )
+            } else {
+                format!(
+                    "Link {}/{} • Tab:Next • 1-9:Jump • Enter:Follow • Esc:Exit",
+                    selected, link_count
+                )
+            }
+        } else {
+            "No links in current section • Press Esc to exit".to_string()
+        };
+
+        format!(" [LINK FOLLOW MODE] {} ", link_info)
     } else {
-        0
-    };
+        // Normal mode status
+        let focus_indicator = match app.focus {
+            Focus::Outline => "Outline",
+            Focus::Content => "Content",
+        };
 
-    let outline_status = if app.show_outline {
-        format!("Outline:{}%", app.outline_width)
-    } else {
-        "Outline:Hidden".to_string()
-    };
+        let selected_idx = app.outline_state.selected().unwrap_or(0);
+        let total = app.outline_items.len();
+        let percentage = if total > 0 {
+            (selected_idx + 1) * 100 / total
+        } else {
+            0
+        };
 
-    let bookmark_indicator = if app.bookmark_position.is_some() {
-        " ⚑"
-    } else {
-        ""
-    };
+        let outline_status = if app.show_outline {
+            format!("Outline:{}%", app.outline_width)
+        } else {
+            "Outline:Hidden".to_string()
+        };
 
-    let status_text = format!(
-        " [{}] {}/{} ({}%){} • {} • w:View • []:Size • m:Mark • Copy: y:Text Y:Link • t:Theme • ?:Help ",
-        focus_indicator,
-        selected_idx + 1,
-        total,
-        percentage,
-        bookmark_indicator,
-        outline_status
-    );
+        let bookmark_indicator = if app.bookmark_position.is_some() {
+            " ⚑"
+        } else {
+            ""
+        };
+
+        let history_indicator = if !app.file_history.is_empty() {
+            format!(" ← {} ", app.file_history.len())
+        } else {
+            "".to_string()
+        };
+
+        format!(
+            " [{}] {}/{} ({}%){}{} • {} • f:Links • b:Back • w:View • []:Size • m:Mark • y/Y:Copy • t:Theme • ?:Help ",
+            focus_indicator,
+            selected_idx + 1,
+            total,
+            percentage,
+            bookmark_indicator,
+            history_indicator,
+            outline_status
+        )
+    };
 
     let theme_name = format!(" Theme:{} ", app.theme.name);
     let status_text = format!("{}{}", status_text, theme_name);
 
-    let status = Paragraph::new(status_text).style(app.theme.status_bar_style());
+    let status_style = if app.mode == AppMode::LinkFollow {
+        Style::default()
+            .bg(Color::Rgb(0, 100, 0))
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        app.theme.status_bar_style()
+    };
+
+    let status = Paragraph::new(status_text).style(status_style);
 
     frame.render_widget(status, area);
 }
@@ -282,6 +381,10 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("  G        ", Style::default().fg(Color::Yellow)),
             Span::raw("Jump to bottom"),
+        ]),
+        Line::from(vec![
+            Span::styled("  p        ", Style::default().fg(Color::Yellow)),
+            Span::raw("Jump to parent heading"),
         ]),
         Line::from(vec![
             Span::styled("  d        ", Style::default().fg(Color::Yellow)),
@@ -356,6 +459,39 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
+            "Link Following",
+            Style::default().add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![
+            Span::styled("  f        ", Style::default().fg(Color::Green)),
+            Span::raw("Enter link follow mode"),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tab      ", Style::default().fg(Color::Green)),
+            Span::raw("Cycle through links (in link mode)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  1-9      ", Style::default().fg(Color::Green)),
+            Span::raw("Jump to link by number (in link mode)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  Enter    ", Style::default().fg(Color::Green)),
+            Span::raw("Follow selected link (in link mode)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  p        ", Style::default().fg(Color::Green)),
+            Span::raw("Jump to parent's links (stay in link mode)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  b/Bksp   ", Style::default().fg(Color::Green)),
+            Span::raw("Go back to previous file"),
+        ]),
+        Line::from(vec![
+            Span::styled("  F        ", Style::default().fg(Color::Green)),
+            Span::raw("Go forward in navigation history"),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
             "Themes & Clipboard",
             Style::default().add_modifier(Modifier::BOLD),
         )]),
@@ -370,6 +506,10 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("  Y        ", Style::default().fg(Color::Magenta)),
             Span::raw("Copy anchor link (#heading-name)"),
+        ]),
+        Line::from(vec![
+            Span::styled("  e        ", Style::default().fg(Color::Magenta)),
+            Span::raw("Edit file in default editor ($VISUAL or $EDITOR)"),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -421,6 +561,134 @@ fn centered_area(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
     area
 }
 
+fn render_link_picker(frame: &mut Frame, app: &App, area: Rect) {
+    use crate::parser::LinkTarget;
+
+    // Create centered popup area (smaller than full screen)
+    let popup_area = centered_area(area, 80, 60);
+
+    // Clear background
+    frame.render_widget(Clear, popup_area);
+
+    // Create lines for each link
+    let mut lines = vec![
+        Line::from(vec![Span::styled(
+            format!(
+                "Links in this section ({} found) - Tab/j/k to navigate, Enter to follow, Esc to cancel",
+                app.links_in_view.len()
+            ),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+    ];
+
+    for (idx, link) in app.links_in_view.iter().enumerate() {
+        let is_selected = app.selected_link_idx == Some(idx);
+
+        // Format link number and text
+        let number = format!("[{}] ", idx + 1);
+        let link_text = &link.text;
+
+        // Format target
+        let target_str = match &link.target {
+            LinkTarget::Anchor(a) => format!("#{}", a),
+            LinkTarget::RelativeFile { path, anchor } => {
+                if let Some(a) = anchor {
+                    format!("{}#{}", path.display(), a)
+                } else {
+                    path.display().to_string()
+                }
+            }
+            LinkTarget::WikiLink { target, .. } => format!("[[{}]]", target),
+            LinkTarget::External(url) => {
+                if url.len() > 50 {
+                    format!("{}...", &url[..47])
+                } else {
+                    url.clone()
+                }
+            }
+        };
+
+        // Different styles for selected vs unselected
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "▶ ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    number,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    link_text,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                ),
+            ]));
+            // Show target on next line when selected
+            lines.push(Line::from(vec![Span::styled(
+                format!("  → {}", target_str),
+                Style::default()
+                    .fg(Color::Gray)
+                    .add_modifier(Modifier::ITALIC),
+            )]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    number,
+                    Style::default()
+                        .fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    link_text,
+                    Style::default()
+                        .fg(Color::Gray),
+                ),
+                Span::styled(
+                    format!(" → {}", target_str),
+                    Style::default()
+                        .fg(Color::DarkGray),
+                ),
+            ]));
+        }
+
+        // Add blank line between links
+        if idx < app.links_in_view.len() - 1 {
+            lines.push(Line::from(""));
+        }
+    }
+
+    // Add footer
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "Tab/j/k: Navigate • 1-9: Jump • p: Parent • Enter: Follow • Esc: Cancel",
+        Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::ITALIC),
+    )]));
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green))
+                .title(" Link Navigator ")
+                .style(Style::default().bg(Color::Rgb(20, 20, 40))),
+        )
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(paragraph, popup_area);
+}
+
 use crate::tui::syntax::SyntaxHighlighter;
 
 fn render_markdown_enhanced(
@@ -437,7 +705,7 @@ fn render_markdown_enhanced(
         let trimmed = line.trim_start();
 
         // Handle code blocks
-        if trimmed.starts_with("```") {
+        if let Some(after_fence) = trimmed.strip_prefix("```") {
             if in_code_block {
                 // End of code block - highlight accumulated code
                 if !code_buffer.is_empty() {
@@ -453,7 +721,7 @@ fn render_markdown_enhanced(
             } else {
                 // Start of code block
                 in_code_block = true;
-                code_lang = SyntaxHighlighter::detect_language(&trimmed[3..]);
+                code_lang = SyntaxHighlighter::detect_language(after_fence);
                 lines.push(Line::from(vec![Span::styled(
                     line.to_string(),
                     theme.code_fence_style(),
@@ -489,14 +757,13 @@ fn render_markdown_enhanced(
             lines.push(Line::from(spans));
         }
         // Numbered lists
-        else if trimmed.chars().next().is_some_and(|c| c.is_numeric()) && trimmed.contains(". ")
-        {
+        else if trimmed.chars().next().is_some_and(|c| c.is_numeric()) && trimmed.contains(". ") {
             let formatted = format_inline_markdown(line, theme);
             lines.push(Line::from(formatted));
         }
         // Blockquotes
-        else if trimmed.starts_with('>') {
-            let text = trimmed[1..].trim();
+        else if let Some(quote_text) = trimmed.strip_prefix('>') {
+            let text = quote_text.trim();
             let formatted = format_inline_markdown(text, theme);
             let mut spans = vec![Span::styled(
                 "│ ",

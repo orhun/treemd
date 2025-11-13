@@ -1,13 +1,23 @@
-use crate::parser::{Document, HeadingNode};
+use crate::parser::{Document, HeadingNode, Link, extract_links};
 use crate::tui::syntax::SyntaxHighlighter;
 use crate::tui::theme::{Theme, ThemeName};
 use ratatui::widgets::{ListState, ScrollbarState};
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus {
     Outline,
     Content,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AppMode {
+    Normal,
+    LinkFollow,
+    Search,
+    ThemePicker,
+    Help,
 }
 
 pub struct App {
@@ -35,6 +45,26 @@ pub struct App {
     pub show_theme_picker: bool,
     pub theme_picker_selected: usize,
     previous_selection: Option<String>, // Track previous selection to detect changes
+
+    // Link following state
+    pub mode: AppMode,
+    pub current_file_path: PathBuf, // Path to current file for resolving relative links
+    pub links_in_view: Vec<Link>,   // Links in currently displayed content
+    pub selected_link_idx: Option<usize>, // Currently selected link index
+    pub file_history: Vec<FileState>, // Back navigation stack
+    pub file_future: Vec<FileState>, // Forward navigation stack (for undo back)
+    pub status_message: Option<String>, // Temporary status message to display
+}
+
+/// Saved state for file navigation history
+#[derive(Debug, Clone)]
+pub struct FileState {
+    pub path: PathBuf,
+    pub document: Document,
+    pub filename: String,
+    pub selected_heading: Option<String>,
+    pub content_scroll: u16,
+    pub outline_state_selected: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,7 +76,7 @@ pub struct OutlineItem {
 }
 
 impl App {
-    pub fn new(document: Document, filename: String) -> Self {
+    pub fn new(document: Document, filename: String, file_path: PathBuf) -> Self {
         let tree = document.build_tree();
         let collapsed_headings = HashSet::new();
         let outline_items = Self::flatten_tree(&tree, &collapsed_headings);
@@ -86,6 +116,15 @@ impl App {
             show_theme_picker: false,
             theme_picker_selected: 0,
             previous_selection: None,
+
+            // Link following state
+            mode: AppMode::Normal,
+            current_file_path: file_path,
+            links_in_view: Vec::new(),
+            selected_link_idx: None,
+            file_history: Vec::new(),
+            file_future: Vec::new(),
+            status_message: None,
         }
     }
 
@@ -229,6 +268,28 @@ impl App {
             let last = self.content_height.saturating_sub(1);
             self.content_scroll = last;
             self.content_scroll_state = self.content_scroll_state.position(last as usize);
+        }
+    }
+
+    pub fn jump_to_parent(&mut self) {
+        if self.focus == Focus::Outline {
+            if let Some(current_idx) = self.outline_state.selected() {
+                if current_idx < self.outline_items.len() {
+                    let current_level = self.outline_items[current_idx].level;
+
+                    // Search backwards for a heading with lower level (parent)
+                    for i in (0..current_idx).rev() {
+                        if self.outline_items[i].level < current_level {
+                            self.outline_state.select(Some(i));
+                            self.outline_scroll_state = self.outline_scroll_state.position(i);
+                            return;
+                        }
+                    }
+
+                    // If no parent found, stay at current position
+                    // (we're already at a top-level heading or first item)
+                }
+            }
         }
     }
 
@@ -552,16 +613,414 @@ impl App {
         // Copy the anchor link for the currently selected heading
         if let Some(heading_text) = self.selected_heading_text() {
             // Convert heading to anchor format (lowercase, replace spaces with dashes)
-            let anchor = heading_text
-                .to_lowercase()
-                .replace(|c: char| !c.is_alphanumeric() && c != ' ', "")
-                .replace(' ', "-");
-
+            let anchor = Self::heading_to_anchor(heading_text);
             let anchor_link = format!("#{}", anchor);
 
             if let Ok(mut clipboard) = arboard::Clipboard::new() {
                 let _ = clipboard.set_text(anchor_link);
             }
         }
+    }
+
+    /// Convert heading text to anchor format (lowercase, replace spaces with dashes)
+    fn heading_to_anchor(heading: &str) -> String {
+        heading
+            .to_lowercase()
+            .replace(|c: char| !c.is_alphanumeric() && c != ' ', "")
+            .replace(' ', "-")
+    }
+
+    /// Enter link follow mode - extract links from current section and highlight them
+    pub fn enter_link_follow_mode(&mut self) {
+        // Extract content for current section
+        let content = if let Some(heading_text) = self.selected_heading_text() {
+            self.document
+                .extract_section(heading_text)
+                .unwrap_or_else(|| self.document.content.clone())
+        } else {
+            self.document.content.clone()
+        };
+
+        // Extract all links from the content
+        self.links_in_view = extract_links(&content);
+
+        // Always enter mode, even if no links (so user sees "no links" message)
+        self.mode = AppMode::LinkFollow;
+
+        // Select first link if any exist
+        if !self.links_in_view.is_empty() {
+            self.selected_link_idx = Some(0);
+        } else {
+            self.selected_link_idx = None;
+        }
+    }
+
+    /// Exit link follow mode and return to normal mode
+    pub fn exit_link_follow_mode(&mut self) {
+        self.mode = AppMode::Normal;
+        self.links_in_view.clear();
+        self.selected_link_idx = None;
+        // Don't clear status message here - let it display for a moment
+    }
+
+    /// Cycle to the next link (Tab in link follow mode)
+    pub fn next_link(&mut self) {
+        if self.mode == AppMode::LinkFollow && !self.links_in_view.is_empty() {
+            self.selected_link_idx = Some(match self.selected_link_idx {
+                Some(idx) => {
+                    if idx >= self.links_in_view.len() - 1 {
+                        0 // Wrap to first
+                    } else {
+                        idx + 1
+                    }
+                }
+                None => 0,
+            });
+        }
+    }
+
+    /// Cycle to the previous link (Shift+Tab in link follow mode)
+    pub fn previous_link(&mut self) {
+        if self.mode == AppMode::LinkFollow && !self.links_in_view.is_empty() {
+            self.selected_link_idx = Some(match self.selected_link_idx {
+                Some(idx) => {
+                    if idx == 0 {
+                        self.links_in_view.len() - 1 // Wrap to last
+                    } else {
+                        idx - 1
+                    }
+                }
+                None => 0,
+            });
+        }
+    }
+
+    /// Jump to parent heading while staying in link follow mode
+    pub fn jump_to_parent_links(&mut self) {
+        if self.mode == AppMode::LinkFollow {
+            // First, jump to parent in outline
+            if let Some(current_idx) = self.outline_state.selected() {
+                if current_idx < self.outline_items.len() {
+                    let current_level = self.outline_items[current_idx].level;
+
+                    // Search backwards for a heading with lower level (parent)
+                    for i in (0..current_idx).rev() {
+                        if self.outline_items[i].level < current_level {
+                            // Jump to parent in outline
+                            self.outline_state.select(Some(i));
+                            self.outline_scroll_state = self.outline_scroll_state.position(i);
+
+                            // Now extract links from parent's content
+                            let content = if let Some(heading_text) = self.selected_heading_text() {
+                                self.document
+                                    .extract_section(heading_text)
+                                    .unwrap_or_else(|| self.document.content.clone())
+                            } else {
+                                self.document.content.clone()
+                            };
+                            self.links_in_view = extract_links(&content);
+
+                            // Reset link selection
+                            if !self.links_in_view.is_empty() {
+                                self.selected_link_idx = Some(0);
+                                self.status_message = Some(format!(
+                                    "✓ Jumped to parent ({} links found)",
+                                    self.links_in_view.len()
+                                ));
+                            } else {
+                                self.selected_link_idx = None;
+                                self.status_message = Some("⚠ Parent has no links".to_string());
+                            }
+
+                            return;
+                        }
+                    }
+
+                    // If no parent found (already at top-level)
+                    self.status_message = Some("⚠ Already at top-level heading".to_string());
+                }
+            }
+        }
+    }
+
+    /// Get the currently selected link
+    pub fn get_selected_link(&self) -> Option<&Link> {
+        self.selected_link_idx
+            .and_then(|idx| self.links_in_view.get(idx))
+    }
+
+    /// Follow the currently selected link
+    pub fn follow_selected_link(&mut self) -> Result<(), String> {
+        let link = match self.get_selected_link() {
+            Some(link) => link.clone(),
+            None => return Err("No link selected".to_string()),
+        };
+
+        match link.target {
+            crate::parser::LinkTarget::Anchor(anchor) => {
+                // Jump to heading in current document
+                self.jump_to_anchor(&anchor)?;
+                self.status_message = Some(format!("✓ Jumped to #{}", anchor));
+                self.exit_link_follow_mode();
+                Ok(())
+            }
+            crate::parser::LinkTarget::RelativeFile { path, anchor } => {
+                // Load the linked file
+                self.load_file(&path, anchor.as_deref())?;
+                let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                self.status_message = Some(format!("✓ Opened {}", filename));
+                self.exit_link_follow_mode();
+                Ok(())
+            }
+            crate::parser::LinkTarget::WikiLink { target, .. } => {
+                // Try to find and load the wikilinked file
+                self.load_wikilink(&target)?;
+                self.status_message = Some(format!("✓ Opened [[{}]]", target));
+                self.exit_link_follow_mode();
+                Ok(())
+            }
+            crate::parser::LinkTarget::External(url) => {
+                // Try to open in default browser
+                let open_result = open::that(&url);
+
+                // Also copy to clipboard as backup
+                let mut clipboard_success = false;
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    clipboard_success = clipboard.set_text(url.clone()).is_ok();
+                }
+
+                // Set status message
+                self.status_message = match (open_result, clipboard_success) {
+                    (Ok(_), true) => Some(format!(
+                        "✓ Opened {} in browser (also copied to clipboard)",
+                        url
+                    )),
+                    (Ok(_), false) => Some(format!("✓ Opened {} in browser", url)),
+                    (Err(_), true) => Some(format!(
+                        "⚠ Could not open browser, URL copied to clipboard: {}",
+                        url
+                    )),
+                    (Err(_), false) => Some(format!("✗ Failed to open URL: {}", url)),
+                };
+
+                self.exit_link_follow_mode();
+                Ok(())
+            }
+        }
+    }
+
+    /// Jump to a heading by anchor name
+    fn jump_to_anchor(&mut self, anchor: &str) -> Result<(), String> {
+        // Find heading that matches the anchor
+        for (idx, item) in self.outline_items.iter().enumerate() {
+            let item_anchor = Self::heading_to_anchor(&item.text);
+            if item_anchor == anchor {
+                self.outline_state.select(Some(idx));
+                self.outline_scroll_state = self.outline_scroll_state.position(idx);
+                return Ok(());
+            }
+        }
+        Err(format!("Heading '{}' not found", anchor))
+    }
+
+    /// Load a file by relative path
+    fn load_file(&mut self, relative_path: &PathBuf, anchor: Option<&str>) -> Result<(), String> {
+        // Resolve path relative to current file
+        let current_dir = self
+            .current_file_path
+            .parent()
+            .ok_or("Cannot determine current directory")?;
+        let absolute_path = current_dir.join(relative_path);
+
+        // Parse the new file
+        let new_document = crate::parser::parse_file(&absolute_path)
+            .map_err(|e| format!("Failed to load file: {}", e))?;
+
+        let new_filename = absolute_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Save current state to history
+        self.save_to_history();
+
+        // Load new document
+        self.load_document(new_document, new_filename, absolute_path);
+
+        // Jump to anchor if specified
+        if let Some(anchor_name) = anchor {
+            let _ = self.jump_to_anchor(anchor_name);
+        }
+
+        Ok(())
+    }
+
+    /// Find and load a wikilinked file
+    fn load_wikilink(&mut self, target: &str) -> Result<(), String> {
+        // Try to find the file relative to current directory
+        let current_dir = self
+            .current_file_path
+            .parent()
+            .ok_or("Cannot determine current directory")?;
+
+        // Try various extensions
+        let candidates = vec![
+            format!("{}.md", target),
+            format!("{}.markdown", target),
+            target.to_string(),
+        ];
+
+        for candidate in candidates {
+            let path = current_dir.join(&candidate);
+            if path.exists() {
+                return self.load_file(&PathBuf::from(candidate), None);
+            }
+        }
+
+        Err(format!("Wikilink target '{}' not found", target))
+    }
+
+    /// Save current state to history before navigating away
+    fn save_to_history(&mut self) {
+        let state = FileState {
+            path: self.current_file_path.clone(),
+            document: self.document.clone(),
+            filename: self.filename.clone(),
+            selected_heading: self.selected_heading_text().map(|s| s.to_string()),
+            content_scroll: self.content_scroll,
+            outline_state_selected: self.outline_state.selected(),
+        };
+        self.file_history.push(state);
+
+        // Clear forward history when navigating to a new file
+        self.file_future.clear();
+    }
+
+    /// Load a new document and update all related state
+    fn load_document(&mut self, document: Document, filename: String, path: PathBuf) {
+        self.document = document;
+        self.filename = filename;
+        self.current_file_path = path;
+
+        // Rebuild tree and outline
+        self.tree = self.document.build_tree();
+        self.outline_items = Self::flatten_tree(&self.tree, &self.collapsed_headings);
+
+        // Reset selection to first item
+        let mut outline_state = ListState::default();
+        if !self.outline_items.is_empty() {
+            outline_state.select(Some(0));
+        }
+        self.outline_state = outline_state;
+        self.outline_scroll_state = ScrollbarState::new(self.outline_items.len());
+
+        // Reset content scroll
+        self.content_scroll = 0;
+        let content_lines = self.document.content.lines().count();
+        self.content_height = content_lines as u16;
+        self.content_scroll_state = ScrollbarState::new(content_lines);
+
+        // Clear previous selection tracking
+        self.previous_selection = None;
+    }
+
+    /// Navigate back in file history
+    pub fn go_back(&mut self) -> Result<(), String> {
+        let previous_state = self
+            .file_history
+            .pop()
+            .ok_or("No previous file in history")?;
+
+        // Save current state to future stack
+        let current_state = FileState {
+            path: self.current_file_path.clone(),
+            document: self.document.clone(),
+            filename: self.filename.clone(),
+            selected_heading: self.selected_heading_text().map(|s| s.to_string()),
+            content_scroll: self.content_scroll,
+            outline_state_selected: self.outline_state.selected(),
+        };
+        self.file_future.push(current_state);
+
+        // Restore previous state
+        self.restore_file_state(previous_state);
+
+        Ok(())
+    }
+
+    /// Navigate forward in file history
+    pub fn go_forward(&mut self) -> Result<(), String> {
+        let next_state = self.file_future.pop().ok_or("No next file in history")?;
+
+        // Save current state to history stack
+        let current_state = FileState {
+            path: self.current_file_path.clone(),
+            document: self.document.clone(),
+            filename: self.filename.clone(),
+            selected_heading: self.selected_heading_text().map(|s| s.to_string()),
+            content_scroll: self.content_scroll,
+            outline_state_selected: self.outline_state.selected(),
+        };
+        self.file_history.push(current_state);
+
+        // Restore next state
+        self.restore_file_state(next_state);
+
+        Ok(())
+    }
+
+    /// Restore a file state from history
+    fn restore_file_state(&mut self, state: FileState) {
+        self.load_document(state.document, state.filename, state.path);
+
+        // Restore selection and scroll position
+        if let Some(selected_idx) = state.outline_state_selected {
+            if selected_idx < self.outline_items.len() {
+                self.outline_state.select(Some(selected_idx));
+                self.outline_scroll_state = self.outline_scroll_state.position(selected_idx);
+            }
+        }
+
+        self.content_scroll = state.content_scroll;
+        self.content_scroll_state = self
+            .content_scroll_state
+            .position(state.content_scroll as usize);
+    }
+
+    /// Reload current file from disk (used after external editing)
+    pub fn reload_current_file(&mut self) -> Result<(), String> {
+        // Save current state to restore after reload
+        let current_selection = self.selected_heading_text().map(|s| s.to_string());
+        let current_scroll = self.content_scroll;
+
+        // Reload the file
+        let content = std::fs::read_to_string(&self.current_file_path)
+            .map_err(|e| format!("Failed to reload file: {}", e))?;
+
+        let document = crate::parser::parse_markdown(&content);
+        let filename = self
+            .current_file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+
+        self.load_document(document, filename, self.current_file_path.clone());
+
+        // Try to restore selection if the heading still exists
+        if let Some(heading) = current_selection {
+            self.select_by_text(&heading);
+        }
+
+        // Restore scroll position (may be adjusted if content changed)
+        if current_scroll < self.content_height {
+            self.content_scroll = current_scroll;
+            self.content_scroll_state = self
+                .content_scroll_state
+                .position(current_scroll as usize);
+        }
+
+        Ok(())
     }
 }

@@ -6,8 +6,29 @@ mod ui;
 pub use app::App;
 
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::ExecutableCommand;
 use ratatui::DefaultTerminal;
+use std::io::stdout;
+
+/// Suspend the TUI, run an external editor, then restore the TUI
+fn run_editor(terminal: &mut DefaultTerminal, file_path: &std::path::PathBuf) -> Result<()> {
+    // Leave alternate screen and disable raw mode to give editor full terminal control
+    stdout().execute(LeaveAlternateScreen)?;
+    disable_raw_mode()?;
+
+    // Open file in editor (blocks until editor closes)
+    let result = edit::edit_file(file_path);
+
+    // Restore terminal state
+    stdout().execute(EnterAlternateScreen)?;
+    enable_raw_mode()?;
+    terminal.clear()?;
+
+    // Return editor result
+    result.map_err(|e| e.into())
+}
 
 /// Run the TUI application.
 ///
@@ -51,6 +72,44 @@ pub fn run(terminal: &mut DefaultTerminal, app: App) -> Result<()> {
                         _ => {}
                     }
                 }
+                // Handle link follow mode
+                else if app.mode == app::AppMode::LinkFollow {
+                    // Clear status message on any key press in link mode
+                    app.status_message = None;
+
+                    match key.code {
+                        KeyCode::Esc => app.exit_link_follow_mode(),
+                        KeyCode::Enter => {
+                            if let Err(e) = app.follow_selected_link() {
+                                // Show error in status message
+                                app.status_message = Some(format!("✗ Error: {}", e));
+                            }
+                            app.update_content_metrics();
+                        }
+                        KeyCode::Tab => {
+                            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                app.previous_link();
+                            } else {
+                                app.next_link();
+                            }
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => app.next_link(),
+                        KeyCode::Char('k') | KeyCode::Up => app.previous_link(),
+                        KeyCode::Char(c @ '1'..='9') => {
+                            // Direct link selection by number
+                            let idx = c.to_digit(10).unwrap() as usize - 1;
+                            if idx < app.links_in_view.len() {
+                                app.selected_link_idx = Some(idx);
+                            }
+                        }
+                        KeyCode::Char('p') => {
+                            // Jump to parent heading while staying in link mode
+                            app.jump_to_parent_links();
+                        }
+                        KeyCode::Char('q') => return Ok(()),
+                        _ => {}
+                    }
+                }
                 // Handle search mode separately
                 else if app.show_search {
                     match key.code {
@@ -64,6 +123,11 @@ pub fn run(terminal: &mut DefaultTerminal, app: App) -> Result<()> {
                         _ => {}
                     }
                 } else {
+                    // Clear status message on any key press in normal mode
+                    if app.status_message.is_some() && key.code != KeyCode::Char('f') {
+                        app.status_message = None;
+                    }
+
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc if !app.show_help => return Ok(()),
                         KeyCode::Char('?') => app.toggle_help(),
@@ -75,6 +139,7 @@ pub fn run(terminal: &mut DefaultTerminal, app: App) -> Result<()> {
                         KeyCode::Char('u') => app.scroll_page_up(),
                         KeyCode::Char('g') => app.first(),
                         KeyCode::Char('G') => app.last(),
+                        KeyCode::Char('p') => app.jump_to_parent(),
                         KeyCode::Enter | KeyCode::Char(' ') => app.toggle_expand(),
                         KeyCode::Tab => app.toggle_focus(),
                         KeyCode::Char('h') | KeyCode::Left => app.collapse(),
@@ -98,6 +163,37 @@ pub fn run(terminal: &mut DefaultTerminal, app: App) -> Result<()> {
                         KeyCode::Char('t') => app.toggle_theme_picker(),
                         KeyCode::Char('y') => app.copy_content(),
                         KeyCode::Char('Y') => app.copy_anchor(),
+                        // Edit file
+                        KeyCode::Char('e') => {
+                            // Run editor with proper terminal suspend/restore
+                            match run_editor(terminal, &app.current_file_path) {
+                                Ok(_) => {
+                                    // Reload file after successful edit
+                                    if let Err(e) = app.reload_current_file() {
+                                        app.status_message = Some(format!("✗ Failed to reload: {}", e));
+                                    } else {
+                                        app.status_message = Some("✓ File reloaded after editing".to_string());
+                                    }
+                                    app.update_content_metrics();
+                                }
+                                Err(e) => {
+                                    app.status_message = Some(format!("✗ Editor failed: {}", e));
+                                }
+                            }
+                        }
+                        // Link following
+                        KeyCode::Char('f') => app.enter_link_follow_mode(),
+                        KeyCode::Char('b') | KeyCode::Backspace => {
+                            if app.go_back().is_ok() {
+                                app.update_content_metrics();
+                            }
+                        }
+                        KeyCode::Char('F') => {
+                            // Forward navigation (Shift+F)
+                            if app.go_forward().is_ok() {
+                                app.update_content_metrics();
+                            }
+                        }
                         _ => {}
                     }
                 }
