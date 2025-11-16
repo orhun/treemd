@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-01-16
+
+### Fixed
+
+- **Linux X11 Clipboard Support** - Resolved critical clipboard copy bug on Linux X11 environments (Arch, i3wm, etc.)
+  - Clipboard instance now persists throughout app lifetime (required for X11 to serve paste requests)
+  - Previously, clipboard was immediately dropped after copy, causing content to disappear on Linux
+  - Fixes reported issue: "unable to copy the content of section using keybindings 'y/Y'" on Arch Linux + i3
+  - macOS and Windows unaffected (different clipboard models)
+
+- **Modal State Blocking** - Copy operations now work in all application modes
+  - Added `y` (copy content) and `Y` (copy anchor) handlers to link follow mode
+  - Added `y`/`Y` handlers to help mode (`?`)
+  - Added `y`/`Y` handlers to theme picker mode (`t`)
+  - Previously only worked in normal mode, causing confusion for users
+
+### Added
+
+- **Clipboard Status Feedback** - All copy operations now provide visual confirmation
+  - Success: "✓ Section copied to clipboard"
+  - Success: "✓ Anchor link copied: #heading-name"
+  - Error: "✗ No heading selected"
+  - Error: "✗ Could not extract section"
+  - Error: "✗ Clipboard not available"
+  - Error: "✗ Clipboard error: {details}"
+
+- **Linux Clipboard Manager Recommendation** - Help screen now includes setup guidance
+  - Recommends installing clipboard manager (clipit, parcellite, xclip) for best results on Linux
+  - Helps users understand X11 clipboard behavior and workarounds
+
+### Changed
+
+- **Persistent Clipboard Architecture** - App struct now maintains clipboard instance
+  - `clipboard: Option<arboard::Clipboard>` field added to App struct
+  - Initialized once in `App::new()` and kept alive for entire session
+  - Comprehensive error handling with Result pattern instead of silent failures
+  - All clipboard errors now properly surfaced to user
+
+- **Help Documentation** - Updated clipboard keybinding descriptions
+  - Clarified that `y` and `Y` work in all modes (not just normal mode)
+  - Added prominent note about Linux clipboard manager recommendation
+
+### Technical
+
+- **App State Enhancement** (`src/tui/app.rs`)
+  - Added `clipboard: Option<arboard::Clipboard>` field (line 60)
+  - Initialize clipboard in `App::new()` with `.ok()` fallback (line 134)
+  - Rewrote `copy_content()` with comprehensive error handling (lines 608-631)
+  - Rewrote `copy_anchor()` with comprehensive error handling (lines 633-657)
+
+- **Event Handling Updates** (`src/tui/mod.rs`)
+  - Added `y`/`Y` handlers to help mode (lines 61-62)
+  - Added `y`/`Y` handlers to theme picker mode (lines 75-76)
+  - Added `y`/`Y` handlers to link follow mode (lines 110-111)
+
+- **UI Documentation** (`src/tui/ui.rs`)
+  - Updated help text for copy operations (lines 504, 508)
+  - Added Linux clipboard manager recommendation (lines 515-523)
+
+- **Code Quality**
+  - Zero clippy warnings
+  - Clean compilation
+  - Proper error propagation (no more silent `let _ =` failures)
+  - Follows Rust best practices for Option and Result handling
+
+### Platform-Specific Notes
+
+- **Linux (X11)**: Persistent clipboard instance fixes paste failures. Clipboard manager recommended.
+- **Linux (Wayland)**: Uses `wayland-data-control` feature, persistent instance recommended.
+- **macOS**: Works as before (system manages clipboard, no persistence needed).
+- **Windows**: Works as before (system manages clipboard, no persistence needed).
+
 ## [0.2.0] - 2025-01-13
 
 ### Added

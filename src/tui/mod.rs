@@ -57,6 +57,9 @@ pub fn run(terminal: &mut DefaultTerminal, app: App) -> Result<()> {
                         KeyCode::Char('?') | KeyCode::Esc => app.toggle_help(),
                         KeyCode::Char('j') | KeyCode::Down => app.scroll_help_down(),
                         KeyCode::Char('k') | KeyCode::Up => app.scroll_help_up(),
+                        // Copy operations work in help mode too
+                        KeyCode::Char('y') => app.copy_content(),
+                        KeyCode::Char('Y') => app.copy_anchor(),
                         KeyCode::Char('q') => return Ok(()),
                         _ => {}
                     }
@@ -68,6 +71,9 @@ pub fn run(terminal: &mut DefaultTerminal, app: App) -> Result<()> {
                         KeyCode::Enter => app.apply_selected_theme(),
                         KeyCode::Char('j') | KeyCode::Down => app.theme_picker_next(),
                         KeyCode::Char('k') | KeyCode::Up => app.theme_picker_previous(),
+                        // Copy operations work in theme picker too
+                        KeyCode::Char('y') => app.copy_content(),
+                        KeyCode::Char('Y') => app.copy_anchor(),
                         KeyCode::Char('q') => return Ok(()),
                         _ => {}
                     }
@@ -106,6 +112,9 @@ pub fn run(terminal: &mut DefaultTerminal, app: App) -> Result<()> {
                             // Jump to parent heading while staying in link mode
                             app.jump_to_parent_links();
                         }
+                        // Copy operations work in link mode too
+                        KeyCode::Char('y') => app.copy_content(),
+                        KeyCode::Char('Y') => app.copy_anchor(),
                         KeyCode::Char('q') => return Ok(()),
                         _ => {}
                     }

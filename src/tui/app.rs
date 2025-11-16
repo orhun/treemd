@@ -54,6 +54,10 @@ pub struct App {
     pub file_history: Vec<FileState>, // Back navigation stack
     pub file_future: Vec<FileState>, // Forward navigation stack (for undo back)
     pub status_message: Option<String>, // Temporary status message to display
+
+    // Persistent clipboard for Linux X11 compatibility
+    // On Linux, the clipboard instance must stay alive to serve paste requests
+    clipboard: Option<arboard::Clipboard>,
 }
 
 /// Saved state for file navigation history
@@ -125,6 +129,9 @@ impl App {
             file_history: Vec::new(),
             file_future: Vec::new(),
             status_message: None,
+
+            // Initialize persistent clipboard (None if unavailable)
+            clipboard: arboard::Clipboard::new().ok(),
         }
     }
 
@@ -602,10 +609,24 @@ impl App {
         // Copy the currently selected section's content
         if let Some(heading_text) = self.selected_heading_text() {
             if let Some(section) = self.document.extract_section(heading_text) {
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    let _ = clipboard.set_text(section);
+                // Use persistent clipboard for Linux X11 compatibility
+                if let Some(clipboard) = &mut self.clipboard {
+                    match clipboard.set_text(section) {
+                        Ok(_) => {
+                            self.status_message = Some("✓ Section copied to clipboard".to_string());
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("✗ Clipboard error: {}", e));
+                        }
+                    }
+                } else {
+                    self.status_message = Some("✗ Clipboard not available".to_string());
                 }
+            } else {
+                self.status_message = Some("✗ Could not extract section".to_string());
             }
+        } else {
+            self.status_message = Some("✗ No heading selected".to_string());
         }
     }
 
@@ -616,9 +637,22 @@ impl App {
             let anchor = Self::heading_to_anchor(heading_text);
             let anchor_link = format!("#{}", anchor);
 
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                let _ = clipboard.set_text(anchor_link);
+            // Use persistent clipboard for Linux X11 compatibility
+            if let Some(clipboard) = &mut self.clipboard {
+                match clipboard.set_text(anchor_link) {
+                    Ok(_) => {
+                        self.status_message =
+                            Some(format!("✓ Anchor link copied: #{}", anchor));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("✗ Clipboard error: {}", e));
+                    }
+                }
+            } else {
+                self.status_message = Some("✗ Clipboard not available".to_string());
             }
+        } else {
+            self.status_message = Some("✗ No heading selected".to_string());
         }
     }
 

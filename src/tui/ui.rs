@@ -501,16 +501,26 @@ fn render_help_popup(frame: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("  y        ", Style::default().fg(Color::Magenta)),
-            Span::raw("Copy current section content"),
+            Span::raw("Copy current section content (works in all modes)"),
         ]),
         Line::from(vec![
             Span::styled("  Y        ", Style::default().fg(Color::Magenta)),
-            Span::raw("Copy anchor link (#heading-name)"),
+            Span::raw("Copy anchor link (works in all modes)"),
         ]),
         Line::from(vec![
             Span::styled("  e        ", Style::default().fg(Color::Magenta)),
             Span::raw("Edit file in default editor ($VISUAL or $EDITOR)"),
         ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Note: ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ), Span::styled(
+            "On Linux, install a clipboard manager (clipit, parcellite, xclip) for best results",
+            Style::default().fg(Color::Gray),
+        )]),
         Line::from(""),
         Line::from(vec![Span::styled(
             "Use j/k or ↓/↑ to scroll | Press Esc or ? to close",
