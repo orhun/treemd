@@ -104,9 +104,11 @@ impl App {
 
         let content_lines = document.content.lines().count();
 
-        // Load theme from config and apply color mode
+        // Load theme from config, apply custom colors, then apply color mode
         let current_theme = config.theme_name();
-        let theme = Theme::from_name(current_theme).with_color_mode(color_mode);
+        let theme = Theme::from_name(current_theme)
+            .with_custom_colors(&config.theme)
+            .with_color_mode(color_mode);
 
         // Load outline width from config
         let outline_width = config.ui.outline_width;
@@ -624,8 +626,10 @@ impl App {
         };
 
         self.current_theme = new_theme;
-        // Apply color mode when setting theme
-        self.theme = Theme::from_name(new_theme).with_color_mode(self.color_mode);
+        // Apply color mode when setting theme (also apply custom colors from config)
+        self.theme = Theme::from_name(new_theme)
+            .with_custom_colors(&self.config.theme)
+            .with_color_mode(self.color_mode);
         self.show_theme_picker = false;
 
         // Save to config (silently ignore errors)
