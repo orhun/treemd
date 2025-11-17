@@ -95,6 +95,37 @@ pub struct Cli {
     /// Completions intelligently filter to show only .md/.markdown files.
     #[arg(long = "setup-completions")]
     pub setup_completions: bool,
+
+    /// Set theme for TUI mode
+    ///
+    /// Override the saved theme preference. Available themes:
+    /// OceanDark, Nord, Dracula, Solarized, Monokai, Gruvbox, TokyoNight, CatppuccinMocha
+    ///
+    /// Example: --theme Nord
+    #[arg(long = "theme", value_name = "THEME")]
+    pub theme: Option<String>,
+
+    /// Force color mode (auto, rgb, 256)
+    ///
+    /// Override automatic terminal detection:
+    ///   auto - Detect terminal capabilities (default)
+    ///   rgb  - Force true color (16M colors)
+    ///   256  - Force 256-color palette
+    ///
+    /// Example: --color-mode 256
+    #[arg(long = "color-mode", value_name = "MODE")]
+    pub color_mode: Option<ColorModeArg>,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum ColorModeArg {
+    /// Automatically detect terminal capabilities
+    Auto,
+    /// Force RGB/true color mode
+    Rgb,
+    /// Force 256-color mode
+    #[value(name = "256")]
+    Color256,
 }
 
 #[derive(Debug, clap::Subcommand)]
