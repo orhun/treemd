@@ -1,6 +1,6 @@
 [package]
 name = "treemd"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["epistates, inc. <nick@epistates.com>"]
 description = "A markdown navigator with tree-based structural navigation and syntax highlighting"
@@ -58,6 +58,13 @@ open = "5.3"
 
 # Open files in default editor
 edit = "0.1"
+
+# Configuration persistence
+dirs = "6.0"
+toml = "0.9"
+
+# Terminal color capability detection
+supports-color = "3.0"
 
 [features]
 default = ["unstable-dynamic"]
