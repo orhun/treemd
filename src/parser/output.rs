@@ -96,6 +96,11 @@ pub enum Block {
     },
     #[serde(rename = "horizontal_rule")]
     HorizontalRule,
+    Details {
+        summary: String,
+        content: String,
+        blocks: Vec<Block>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

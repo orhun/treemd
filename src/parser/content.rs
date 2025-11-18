@@ -3,11 +3,20 @@
 //! Parses markdown content into semantic blocks and inline elements.
 
 use super::output::{Alignment, Block, InlineElement, ListItem};
-use pulldown_cmark::{Alignment as CmarkAlignment, CodeBlockKind, Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment as CmarkAlignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 /// Parse markdown content into structured blocks
 pub fn parse_content(markdown: &str, start_line: usize) -> Vec<Block> {
-    let parser = Parser::new(markdown);
+    // First, extract any <details> blocks and replace them with placeholders
+    let (processed_markdown, details_blocks) = extract_details_blocks(markdown);
+
+    // Enable GitHub Flavored Markdown extensions
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+
+    let parser = Parser::new_ext(&processed_markdown, options);
     let mut blocks = Vec::new();
     let mut state = ParserState::new(start_line);
 
@@ -17,7 +26,111 @@ pub fn parse_content(markdown: &str, start_line: usize) -> Vec<Block> {
 
     // Flush any pending block
     state.finalize(&mut blocks);
-    blocks
+
+    // Replace placeholders with actual Details blocks
+    let mut final_blocks = Vec::new();
+    for block in blocks {
+        if let Block::Paragraph { content, .. } = &block {
+            // Check if this paragraph contains only the placeholder
+            let trimmed = content.trim();
+            if trimmed.starts_with("[DETAILS_BLOCK_") && trimmed.ends_with(']') {
+                if let Some(index_str) = trimmed.strip_prefix("[DETAILS_BLOCK_") {
+                    if let Some(index_str) = index_str.strip_suffix(']') {
+                        if let Ok(index) = index_str.parse::<usize>() {
+                            if let Some(details_block) = details_blocks.get(index) {
+                                final_blocks.push(details_block.clone());
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        final_blocks.push(block);
+    }
+
+    final_blocks
+}
+
+/// Extract <details> blocks from markdown and replace with placeholders
+fn extract_details_blocks(markdown: &str) -> (String, Vec<Block>) {
+    let mut details_blocks = Vec::new();
+    let mut result = String::new();
+    let mut current_pos = 0;
+
+    while current_pos < markdown.len() {
+        // Look for <details> tag
+        if markdown[current_pos..].starts_with("<details") {
+            // Find the end of the opening tag
+            if let Some(tag_end) = markdown[current_pos..].find('>') {
+                let details_start = current_pos + tag_end + 1;
+
+                // Find the matching </details> tag
+                if let Some(details_end_pos) = markdown[details_start..].find("</details>") {
+                    let details_end = details_start + details_end_pos;
+                    let details_content = &markdown[details_start..details_end];
+
+                    // Extract summary
+                    let summary = if let Some(summary_start_pos) = details_content.find("<summary") {
+                        if let Some(summary_tag_end) = details_content[summary_start_pos..].find('>') {
+                            let summary_content_start = summary_start_pos + summary_tag_end + 1;
+                            if let Some(summary_end_pos) = details_content[summary_content_start..].find("</summary>") {
+                                let summary_end = summary_content_start + summary_end_pos;
+                                details_content[summary_content_start..summary_end].trim().to_string()
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    };
+
+                    // Extract content (everything after </summary>)
+                    let content_start = if let Some(summary_end_pos) = details_content.find("</summary>") {
+                        let summary_tag_end = summary_end_pos + "</summary>".len();
+                        &details_content[summary_tag_end..]
+                    } else {
+                        details_content
+                    };
+
+                    let content_trimmed = content_start.trim();
+
+                    // Parse the content inside details
+                    let nested_blocks = if !content_trimmed.is_empty() {
+                        parse_content(content_trimmed, 0)
+                    } else {
+                        Vec::new()
+                    };
+
+                    // Create the Details block
+                    details_blocks.push(Block::Details {
+                        summary,
+                        content: content_trimmed.to_string(),
+                        blocks: nested_blocks,
+                    });
+
+                    // Add placeholder
+                    result.push_str(&format!("\n[DETAILS_BLOCK_{}]\n", details_blocks.len() - 1));
+
+                    // Skip past the entire details block
+                    current_pos = details_end + "</details>".len();
+                    continue;
+                }
+            }
+        }
+
+        // Copy character to result
+        if let Some(ch) = markdown[current_pos..].chars().next() {
+            result.push(ch);
+            current_pos += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    (result, details_blocks)
 }
 
 struct ParserState {
@@ -26,6 +139,10 @@ struct ParserState {
     inline_buffer: Vec<InlineElement>,
     list_items: Vec<ListItem>,
     list_ordered: bool,
+    list_depth: usize,
+    item_depth: usize,
+    task_list_marker: Option<bool>,
+    saved_task_markers: Vec<Option<bool>>,
     code_buffer: String,
     code_language: Option<String>,
     code_start_line: usize,
@@ -56,6 +173,10 @@ impl ParserState {
             inline_buffer: Vec::new(),
             list_items: Vec::new(),
             list_ordered: false,
+            list_depth: 0,
+            item_depth: 0,
+            task_list_marker: None,
+            saved_task_markers: Vec::new(),
             code_buffer: String::new(),
             code_language: None,
             code_start_line: 0,
@@ -209,24 +330,59 @@ fn process_event(event: Event, state: &mut ParserState, blocks: &mut Vec<Block>)
             state.flush_code(blocks);
         }
         Event::Start(Tag::List(start_number)) => {
-            state.in_list = true;
-            state.list_ordered = start_number.is_some();
+            state.list_depth += 1;
+            // Only set list properties for the outermost list
+            if state.list_depth == 1 {
+                state.in_list = true;
+                state.list_ordered = start_number.is_some();
+            }
         }
         Event::End(TagEnd::List(_)) => {
-            state.flush_list(blocks);
+            state.list_depth = state.list_depth.saturating_sub(1);
+            // Only flush when exiting the outermost list
+            if state.list_depth == 0 {
+                state.flush_list(blocks);
+            }
         }
         Event::Start(Tag::Item) => {
-            state.paragraph_buffer.clear();
-            state.inline_buffer.clear();
+            state.item_depth += 1;
+
+            // Save current task marker when entering nested item
+            if state.item_depth > 1 {
+                state.saved_task_markers.push(state.task_list_marker);
+                state.task_list_marker = None;
+            }
+
+            // Only clear buffer for root-level items
+            if state.item_depth == 1 {
+                state.paragraph_buffer.clear();
+                state.inline_buffer.clear();
+            }
         }
         Event::End(TagEnd::Item) => {
-            state.list_items.push(ListItem {
-                checked: None,
-                content: state.paragraph_buffer.clone(),
-                inline: state.inline_buffer.clone(),
-            });
-            state.paragraph_buffer.clear();
-            state.inline_buffer.clear();
+            // Restore saved task marker when exiting nested item
+            if state.item_depth > 1 {
+                if let Some(saved) = state.saved_task_markers.pop() {
+                    state.task_list_marker = saved;
+                }
+            }
+
+            // Only save items at root level (depth 1)
+            if state.item_depth == 1 {
+                state.list_items.push(ListItem {
+                    checked: state.task_list_marker,
+                    content: state.paragraph_buffer.clone(),
+                    inline: state.inline_buffer.clone(),
+                });
+                state.paragraph_buffer.clear();
+                state.inline_buffer.clear();
+                state.task_list_marker = None;
+            }
+            state.item_depth = state.item_depth.saturating_sub(1);
+        }
+        Event::TaskListMarker(checked) => {
+            state.task_list_marker = Some(checked);
+            // Checkbox marker will be added when text is encountered (see Text event)
         }
         Event::Start(Tag::BlockQuote(_)) => {
             state.in_blockquote = true;
@@ -307,10 +463,29 @@ fn process_event(event: Event, state: &mut ParserState, blocks: &mut Vec<Block>)
             state.link_text.clear();
             state.link_url.clear();
         }
-        Event::Start(Tag::Image { .. }) => {
-            // Images are handled through Image event
+        Event::Start(Tag::Image { dest_url, title, .. }) => {
+            state.link_url = dest_url.to_string();
+            state.link_text.clear();
+            state.paragraph_buffer = title.to_string();
         }
-        Event::End(TagEnd::Image) => {}
+        Event::End(TagEnd::Image) => {
+            // Flush any pending blocks before adding image
+            state.flush_paragraph(blocks);
+
+            blocks.push(Block::Image {
+                alt: state.link_text.clone(),
+                src: state.link_url.clone(),
+                title: if state.paragraph_buffer.is_empty() {
+                    None
+                } else {
+                    Some(state.paragraph_buffer.clone())
+                },
+            });
+
+            state.link_text.clear();
+            state.link_url.clear();
+            state.paragraph_buffer.clear();
+        }
         Event::Text(text) => {
             if state.in_code {
                 state.code_buffer.push_str(&text);
@@ -319,6 +494,24 @@ fn process_event(event: Event, state: &mut ParserState, blocks: &mut Vec<Block>)
             } else if state.in_link {
                 state.link_text.push_str(&text);
             } else {
+                // Add indentation for nested list items
+                if state.in_list && state.item_depth > 1 {
+                    // Add newline and indentation before nested item text
+                    if !state.paragraph_buffer.is_empty() && !state.paragraph_buffer.ends_with('\n') {
+                        state.paragraph_buffer.push('\n');
+                    }
+                    // Add indentation based on depth
+                    let indent = "  ".repeat(state.item_depth - 1);
+                    state.paragraph_buffer.push_str(&indent);
+
+                    // Add checkbox marker if this is a task list item
+                    if let Some(checked) = state.task_list_marker {
+                        let marker = if checked { "[x] " } else { "[ ] " };
+                        state.paragraph_buffer.push_str(marker);
+                        // Clear the marker so it's only added once
+                        state.task_list_marker = None;
+                    }
+                }
                 state.add_inline_text(&text);
             }
         }

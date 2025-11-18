@@ -698,6 +698,9 @@ fn render_link_picker(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 use crate::tui::syntax::SyntaxHighlighter;
+use crate::parser::content::parse_content;
+use crate::parser::output::{Block as ContentBlock, InlineElement, Alignment};
+use unicode_width::UnicodeWidthStr;
 
 fn render_markdown_enhanced(
     content: &str,
@@ -705,96 +708,499 @@ fn render_markdown_enhanced(
     theme: &Theme,
 ) -> Text<'static> {
     let mut lines = Vec::new();
-    let mut in_code_block = false;
-    let mut code_lang = String::new();
-    let mut code_buffer = String::new();
 
-    for line in content.lines() {
-        let trimmed = line.trim_start();
+    // Parse content into structured blocks
+    let blocks = parse_content(content, 0);
 
-        // Handle code blocks
-        if let Some(after_fence) = trimmed.strip_prefix("```") {
-            if in_code_block {
-                // End of code block - highlight accumulated code
-                if !code_buffer.is_empty() {
-                    let highlighted = highlighter.highlight_code(&code_buffer, &code_lang);
-                    lines.extend(highlighted);
-                    code_buffer.clear();
-                }
-                in_code_block = false;
+    for block in blocks {
+        match block {
+            ContentBlock::Paragraph { content, inline } => {
+                let formatted = if !inline.is_empty() {
+                    render_inline_elements(&inline, theme)
+                } else {
+                    format_inline_markdown(&content, theme)
+                };
+                lines.push(Line::from(formatted));
+            }
+            ContentBlock::Code { language, content, .. } => {
+                // Opening fence
+                let lang_str = language.as_deref().unwrap_or("");
                 lines.push(Line::from(vec![Span::styled(
-                    line.to_string(),
+                    format!("```{}", lang_str),
                     theme.code_fence_style(),
                 )]));
-            } else {
-                // Start of code block
-                in_code_block = true;
-                code_lang = SyntaxHighlighter::detect_language(after_fence);
+
+                // Highlighted code
+                let highlighted = highlighter.highlight_code(&content, lang_str);
+                lines.extend(highlighted);
+
+                // Closing fence
                 lines.push(Line::from(vec![Span::styled(
-                    line.to_string(),
+                    "```".to_string(),
                     theme.code_fence_style(),
                 )]));
             }
-            continue;
+            ContentBlock::List { ordered, items } => {
+                for (idx, item) in items.iter().enumerate() {
+                    // Check if content has nested items (contains newlines with indentation)
+                    let has_nested = item.content.contains('\n');
+
+                    if has_nested {
+                        // Render multi-line item with nested items
+                        let content_lines = item.content.lines();
+                        for (line_idx, line) in content_lines.enumerate() {
+                            if line_idx == 0 {
+                                // First line: use regular list marker
+                                let prefix = if let Some(checked) = item.checked {
+                                    let checkbox = if checked { "☑" } else { "☐" };
+                                    format!("  {} ", checkbox)
+                                } else if ordered {
+                                    format!("  {}. ", idx + 1)
+                                } else {
+                                    "  • ".to_string()
+                                };
+                                let formatted = format_inline_markdown(line, theme);
+                                let mut spans = vec![Span::styled(
+                                    prefix,
+                                    Style::default().fg(theme.list_bullet),
+                                )];
+                                spans.extend(formatted);
+                                lines.push(Line::from(spans));
+                            } else {
+                                // Nested items: detect indentation and add bullet/checkbox
+                                let trimmed = line.trim_start();
+                                let indent_count = line.len() - trimmed.len();
+                                if indent_count > 0 {
+                                    // Check if this is a task list item by looking for checkbox in text
+                                    let (is_task, checked, text_after_marker) = detect_checkbox_in_text(trimmed);
+
+                                    let indent = " ".repeat(indent_count + 2); // Base indent + 2
+
+                                    let marker = if is_task {
+                                        // Task list item with checkbox
+                                        if checked {
+                                            "☑ "
+                                        } else {
+                                            "☐ "
+                                        }
+                                    } else {
+                                        // Regular bullet
+                                        "• "
+                                    };
+
+                                    let formatted = format_inline_markdown(text_after_marker, theme);
+                                    let mut spans = vec![
+                                        Span::raw(indent),
+                                        Span::styled(marker, Style::default().fg(theme.list_bullet)),
+                                    ];
+                                    spans.extend(formatted);
+                                    lines.push(Line::from(spans));
+                                } else {
+                                    // Empty line or continuation
+                                    lines.push(Line::from(line.to_string()));
+                                }
+                            }
+                        }
+                    } else {
+                        // Simple single-line item
+                        let formatted = if !item.inline.is_empty() {
+                            render_inline_elements(&item.inline, theme)
+                        } else {
+                            format_inline_markdown(&item.content, theme)
+                        };
+
+                        let prefix = if let Some(checked) = item.checked {
+                            let checkbox = if checked { "☑" } else { "☐" };
+                            format!("  {} ", checkbox)
+                        } else if ordered {
+                            format!("  {}. ", idx + 1)
+                        } else {
+                            "  • ".to_string()
+                        };
+
+                        let mut spans = vec![Span::styled(
+                            prefix,
+                            Style::default().fg(theme.list_bullet),
+                        )];
+                        spans.extend(formatted);
+                        lines.push(Line::from(spans));
+                    }
+                }
+            }
+            ContentBlock::Blockquote { content, blocks: nested } => {
+                // If we have nested blocks, render them recursively
+                if !nested.is_empty() {
+                    for nested_block in nested {
+                        let nested_lines = render_block_to_lines(&nested_block, highlighter, theme);
+                        for nested_line in nested_lines {
+                            let mut spans = vec![Span::styled(
+                                "│ ",
+                                Style::default().fg(theme.blockquote_border),
+                            )];
+                            spans.extend(nested_line.spans.into_iter().map(|span| {
+                                Span::styled(
+                                    span.content,
+                                    span.style
+                                        .fg(theme.blockquote_fg)
+                                        .add_modifier(Modifier::ITALIC),
+                                )
+                            }));
+                            lines.push(Line::from(spans));
+                        }
+                    }
+                } else {
+                    // Fallback to raw content
+                    for line in content.lines() {
+                        let formatted = format_inline_markdown(line, theme);
+                        let mut spans = vec![Span::styled(
+                            "│ ",
+                            Style::default().fg(theme.blockquote_border),
+                        )];
+                        spans.extend(formatted.into_iter().map(|span| {
+                            Span::styled(
+                                span.content,
+                                span.style
+                                    .fg(theme.blockquote_fg)
+                                    .add_modifier(Modifier::ITALIC),
+                            )
+                        }));
+                        lines.push(Line::from(spans));
+                    }
+                }
+            }
+            ContentBlock::Table { headers, alignments, rows } => {
+                let table_lines = render_table(&headers, &alignments, &rows, theme);
+                lines.extend(table_lines);
+            }
+            ContentBlock::Image { alt, src, .. } => {
+                // Render image as placeholder with alt text
+                lines.push(Line::from(vec![
+                    Span::styled("🖼 ", Style::default().fg(Color::Rgb(150, 150, 150))),
+                    Span::styled(
+                        format!("[{}]", alt),
+                        Style::default()
+                            .fg(Color::Rgb(100, 150, 200))
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                    Span::styled(
+                        format!(" ({})", src),
+                        Style::default().fg(Color::Rgb(100, 100, 120)),
+                    ),
+                ]));
+            }
+            ContentBlock::Details { summary, blocks: nested, .. } => {
+                // Render details block with collapsed indicator (▶) and summary
+                let summary_spans = vec![
+                    Span::styled("▶ ", Style::default().fg(theme.list_bullet)),
+                    Span::styled(
+                        summary.clone(),
+                        Style::default().fg(theme.heading_color(3)).add_modifier(Modifier::BOLD),
+                    ),
+                ];
+                lines.push(Line::from(summary_spans));
+
+                // For now, render the nested content (in future, this will be toggleable)
+                // Indent the nested content to show hierarchy
+                for nested_block in nested {
+                    let nested_lines = render_block_to_lines(&nested_block, highlighter, theme);
+                    for nested_line in nested_lines {
+                        let mut spans = vec![Span::raw("  ")]; // Indent
+                        spans.extend(nested_line.spans);
+                        lines.push(Line::from(spans));
+                    }
+                }
+            }
+            ContentBlock::HorizontalRule => {
+                lines.push(Line::from(vec![Span::styled(
+                    "─".repeat(60),
+                    Style::default().fg(Color::Rgb(80, 80, 100)),
+                )]));
+            }
         }
 
-        if in_code_block {
-            code_buffer.push_str(line);
-            code_buffer.push('\n');
-            continue;
-        }
-
-        // Heading styling
-        if trimmed.starts_with('#') {
-            let level = trimmed.chars().take_while(|&c| c == '#').count();
-            let text = trimmed.trim_start_matches('#').trim();
-            let color = theme.heading_color(level);
-            lines.push(Line::from(vec![Span::styled(
-                format!("{} {}", "#".repeat(level), text),
-                Style::default()
-                    .fg(color)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-            )]));
-        }
-        // List items
-        else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            let text = &trimmed[2..];
-            let formatted = format_inline_markdown(text, theme);
-            let mut spans = vec![Span::styled("  • ", Style::default().fg(theme.list_bullet))];
-            spans.extend(formatted);
-            lines.push(Line::from(spans));
-        }
-        // Numbered lists
-        else if trimmed.chars().next().is_some_and(|c| c.is_numeric()) && trimmed.contains(". ") {
-            let formatted = format_inline_markdown(line, theme);
-            lines.push(Line::from(formatted));
-        }
-        // Blockquotes
-        else if let Some(quote_text) = trimmed.strip_prefix('>') {
-            let text = quote_text.trim();
-            let formatted = format_inline_markdown(text, theme);
-            let mut spans = vec![Span::styled(
-                "│ ",
-                Style::default().fg(theme.blockquote_border),
-            )];
-            spans.extend(formatted.into_iter().map(|span| {
-                Span::styled(
-                    span.content,
-                    span.style
-                        .fg(theme.blockquote_fg)
-                        .add_modifier(Modifier::ITALIC),
-                )
-            }));
-            lines.push(Line::from(spans));
-        }
-        // Regular text with inline formatting
-        else {
-            let formatted = format_inline_markdown(line, theme);
-            lines.push(Line::from(formatted));
-        }
+        // Add blank line after most blocks for spacing
+        lines.push(Line::from(""));
     }
 
     Text::from(lines)
+}
+
+fn render_block_to_lines(
+    block: &ContentBlock,
+    highlighter: &SyntaxHighlighter,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    match block {
+        ContentBlock::Paragraph { content, inline } => {
+            let formatted = if !inline.is_empty() {
+                render_inline_elements(inline, theme)
+            } else {
+                format_inline_markdown(content, theme)
+            };
+            lines.push(Line::from(formatted));
+        }
+        ContentBlock::Code { language, content, .. } => {
+            let lang_str = language.as_deref().unwrap_or("");
+            let highlighted = highlighter.highlight_code(content, lang_str);
+            lines.extend(highlighted);
+        }
+        ContentBlock::Details { summary, blocks: nested, .. } => {
+            // Render details with collapsed indicator
+            let summary_spans = vec![
+                Span::styled("▶ ", Style::default().fg(theme.list_bullet)),
+                Span::styled(
+                    summary.clone(),
+                    Style::default().fg(theme.heading_color(3)).add_modifier(Modifier::BOLD),
+                ),
+            ];
+            lines.push(Line::from(summary_spans));
+
+            // Render nested content (indented)
+            for nested_block in nested {
+                let nested_lines = render_block_to_lines(nested_block, highlighter, theme);
+                for nested_line in nested_lines {
+                    let mut spans = vec![Span::raw("  ")];
+                    spans.extend(nested_line.spans);
+                    lines.push(Line::from(spans));
+                }
+            }
+        }
+        _ => {
+            // For other blocks, use simple text rendering
+            lines.push(Line::from(vec![Span::raw("")]));
+        }
+    }
+
+    lines
+}
+
+fn render_inline_elements(elements: &[InlineElement], theme: &Theme) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+
+    for element in elements {
+        match element {
+            InlineElement::Text { value } => {
+                spans.push(Span::styled(value.clone(), theme.text_style()));
+            }
+            InlineElement::Strong { value } => {
+                spans.push(Span::styled(value.clone(), theme.bold_style()));
+            }
+            InlineElement::Emphasis { value } => {
+                spans.push(Span::styled(value.clone(), theme.italic_style()));
+            }
+            InlineElement::Code { value } => {
+                spans.push(Span::styled(value.clone(), theme.inline_code_style()));
+            }
+            InlineElement::Link { text, url, .. } => {
+                spans.push(Span::styled(
+                    format!("{} ({})", text, url),
+                    Style::default()
+                        .fg(Color::Rgb(100, 150, 255))
+                        .add_modifier(Modifier::UNDERLINED),
+                ));
+            }
+            InlineElement::Strikethrough { value } => {
+                spans.push(Span::styled(
+                    value.clone(),
+                    Style::default()
+                        .fg(Color::Rgb(120, 120, 120))
+                        .add_modifier(Modifier::CROSSED_OUT),
+                ));
+            }
+            InlineElement::Image { alt, src, .. } => {
+                spans.push(Span::styled(
+                    format!("🖼[{}]({})", alt, src),
+                    Style::default().fg(Color::Rgb(150, 150, 180)),
+                ));
+            }
+        }
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::raw(""));
+    }
+
+    spans
+}
+
+fn render_table(
+    headers: &[String],
+    alignments: &[Alignment],
+    rows: &[Vec<String>],
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    if headers.is_empty() {
+        return lines;
+    }
+
+    // Calculate column widths using Unicode display width
+    let col_count = headers.len();
+    let mut col_widths: Vec<usize> = headers.iter().map(|h| h.width()).collect();
+
+    for row in rows {
+        for (i, cell) in row.iter().enumerate().take(col_count) {
+            col_widths[i] = col_widths[i].max(cell.width());
+        }
+    }
+
+    // Add padding
+    for width in &mut col_widths {
+        *width += 2; // 1 space on each side
+    }
+
+    // Top border
+    let mut top_border = String::from("┌");
+    for (i, &width) in col_widths.iter().enumerate() {
+        top_border.push_str(&"─".repeat(width));
+        if i < col_widths.len() - 1 {
+            top_border.push('┬');
+        }
+    }
+    top_border.push('┐');
+    lines.push(Line::from(vec![Span::styled(
+        top_border,
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    )]));
+
+    // Header row
+    let header_line = render_table_row(headers, &col_widths, alignments, theme, true);
+    lines.push(header_line);
+
+    // Header separator
+    let mut separator = String::from("├");
+    for (i, &width) in col_widths.iter().enumerate() {
+        separator.push_str(&"─".repeat(width));
+        if i < col_widths.len() - 1 {
+            separator.push('┼');
+        }
+    }
+    separator.push('┤');
+    lines.push(Line::from(vec![Span::styled(
+        separator,
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    )]));
+
+    // Data rows
+    for row in rows {
+        let row_line = render_table_row(row, &col_widths, alignments, theme, false);
+        lines.push(row_line);
+    }
+
+    // Bottom border
+    let mut bottom_border = String::from("└");
+    for (i, &width) in col_widths.iter().enumerate() {
+        bottom_border.push_str(&"─".repeat(width));
+        if i < col_widths.len() - 1 {
+            bottom_border.push('┴');
+        }
+    }
+    bottom_border.push('┘');
+    lines.push(Line::from(vec![Span::styled(
+        bottom_border,
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    )]));
+
+    lines
+}
+
+fn render_table_row(
+    cells: &[String],
+    col_widths: &[usize],
+    alignments: &[Alignment],
+    theme: &Theme,
+    is_header: bool,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+
+    spans.push(Span::styled(
+        "│",
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    ));
+
+    for (i, cell) in cells.iter().enumerate() {
+        let width = col_widths.get(i).copied().unwrap_or(10);
+        let alignment = alignments.get(i).unwrap_or(&Alignment::Left);
+
+        let cell_text = align_text(cell, width, alignment);
+
+        let style = if is_header {
+            Style::default()
+                .fg(theme.heading_color(3))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            theme.text_style()
+        };
+
+        spans.push(Span::styled(cell_text, style));
+        spans.push(Span::styled(
+            "│",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        ));
+    }
+
+    Line::from(spans)
+}
+
+/// Detect checkbox markers in text and return (is_task, checked, text_after_marker)
+fn detect_checkbox_in_text(text: &str) -> (bool, bool, &str) {
+    let trimmed = text.trim_start();
+
+    // Check for [x] or [X] (checked)
+    if trimmed.starts_with("[x]") || trimmed.starts_with("[X]") {
+        return (true, true, trimmed[3..].trim_start());
+    }
+
+    // Check for [ ] (unchecked)
+    if trimmed.starts_with("[ ]") {
+        return (true, false, trimmed[3..].trim_start());
+    }
+
+    // Not a task list item
+    (false, false, text)
+}
+
+fn align_text(text: &str, width: usize, alignment: &Alignment) -> String {
+    // Use Unicode display width instead of character/byte length
+    let text_width = text.width();
+
+    // If text is longer than width, truncate it
+    if text_width >= width {
+        // TODO: Proper Unicode-aware truncation
+        if width > 5 {
+            // Approximate truncation - not perfect but better than nothing
+            let approx_chars = width.saturating_sub(5);
+            let truncated = text.chars().take(approx_chars).collect::<String>();
+            return format!(" {}... ", truncated);
+        }
+        return format!(" {} ", text);
+    }
+
+    // Width includes padding we added earlier
+    let content_width = width;
+
+    match alignment {
+        Alignment::Left | Alignment::None => {
+            // Left-aligned: " text     "
+            let right_padding = content_width.saturating_sub(text_width + 1);
+            format!(" {}{}", text, " ".repeat(right_padding))
+        }
+        Alignment::Center => {
+            // Center-aligned: "  text   "
+            let total_padding = content_width.saturating_sub(text_width);
+            let left_pad = total_padding / 2;
+            let right_pad = total_padding - left_pad;
+            format!("{}{}{}", " ".repeat(left_pad), text, " ".repeat(right_pad))
+        }
+        Alignment::Right => {
+            // Right-aligned: "     text "
+            let left_padding = content_width.saturating_sub(text_width + 1);
+            format!("{}{} ", " ".repeat(left_padding), text)
+        }
+    }
 }
 
 fn format_inline_markdown<'a>(text: &str, theme: &Theme) -> Vec<Span<'a>> {
