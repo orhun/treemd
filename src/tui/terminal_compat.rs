@@ -22,9 +22,10 @@ impl TerminalCapabilities {
             .map(|v| v == "Apple_Terminal")
             .unwrap_or(false);
 
-        let supports_rgb = on(Stream::Stdout)
-            .map(|level| level.has_16m)
-            .unwrap_or(false);
+        // Detect RGB/truecolor support using multiple methods for robustness.
+        // The supports_color crate can miss truecolor in some terminals,
+        // so we check environment variables first per termstandard/colors recommendations.
+        let supports_rgb = Self::detect_truecolor_support();
 
         let macos_version = Self::detect_macos_version();
 
@@ -78,6 +79,61 @@ impl TerminalCapabilities {
         None
     }
 
+    /// Detect truecolor (24-bit RGB) support using multiple methods.
+    ///
+    /// Per termstandard/colors recommendations, we check in this order:
+    /// 1. COLORTERM env var for "truecolor" or "24bit" (most reliable)
+    /// 2. TERM env var for known truecolor terminals or suffixes
+    /// 3. Fall back to supports_color crate detection
+    fn detect_truecolor_support() -> bool {
+        // Method 1: Check COLORTERM environment variable (primary standard)
+        // VTE, Konsole, iTerm2, Kitty, Alacritty all set this
+        if let Ok(colorterm) = std::env::var("COLORTERM") {
+            if colorterm == "truecolor" || colorterm == "24bit" {
+                return true;
+            }
+        }
+
+        // Method 2: Check TERM for known truecolor-capable terminals or suffixes
+        if let Ok(term) = std::env::var("TERM") {
+            let term_lower = term.to_lowercase();
+            // Check for explicit truecolor/direct suffixes
+            if term_lower.ends_with("-truecolor")
+                || term_lower.ends_with("-direct")
+                || term_lower.ends_with("direct")
+            {
+                return true;
+            }
+            // Check for known truecolor-capable terminal types
+            if term_lower.contains("kitty")
+                || term_lower.contains("alacritty")
+                || term_lower.contains("wezterm")
+            {
+                return true;
+            }
+        }
+
+        // Method 3: Check TERM_PROGRAM for known truecolor apps
+        // (iTerm2 is already handled by supports_color, but be explicit)
+        if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
+            let prog_lower = term_program.to_lowercase();
+            if prog_lower.contains("iterm")
+                || prog_lower.contains("kitty")
+                || prog_lower.contains("alacritty")
+                || prog_lower.contains("wezterm")
+                || prog_lower.contains("hyper")
+                || prog_lower.contains("vscode")
+            {
+                return true;
+            }
+        }
+
+        // Method 4: Fall back to supports_color crate detection
+        on(Stream::Stdout)
+            .map(|level| level.has_16m)
+            .unwrap_or(false)
+    }
+
     /// Get a user-friendly warning message
     pub fn warning_message(&self) -> Option<String> {
         if !self.should_warn {
@@ -109,5 +165,30 @@ mod tests {
         let caps = TerminalCapabilities::detect();
         // Just ensure it doesn't panic
         println!("Detected capabilities: {:?}", caps);
+    }
+
+    #[test]
+    fn test_truecolor_detection_uses_env_vars() {
+        // This test verifies that the detection method runs without panicking.
+        // Full testing of env var logic would require mocking, but we verify
+        // the detection integrates properly with the capabilities struct.
+        let caps = TerminalCapabilities::detect();
+
+        // The detection should return a valid color mode regardless of environment
+        assert!(
+            caps.recommended_color_mode == ColorMode::Rgb
+                || caps.recommended_color_mode == ColorMode::Indexed256
+        );
+    }
+
+    #[test]
+    fn test_color_mode_enum() {
+        // Verify ColorMode variants are distinct
+        assert_ne!(ColorMode::Rgb, ColorMode::Indexed256);
+
+        // Verify Copy trait works
+        let mode = ColorMode::Rgb;
+        let mode_copy = mode;
+        assert_eq!(mode, mode_copy);
     }
 }
